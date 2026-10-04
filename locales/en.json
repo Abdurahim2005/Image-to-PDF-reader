@@ -1,0 +1,104 @@
+{
+  "choose_language": "🌐 Tilni tanlang / Choose language:",
+  "language_set": "✅ Language set to English.",
+  "banned": "🚫 You have been banned from using this bot.",
+
+  "start_text": "👋 Hi, {name}!\n\nI work with images and PDFs:\n\n📸 Send me image(s) — I'll turn them into one PDF file.\n📄 Send me a PDF — I'll split it into pages and send each page back as an image album.\n\nJust send an image or a PDF to get started! 👇",
+
+  "force_sub_required": "📢 To use this bot, please join the channel(s) below, then press \"✅ Check\":",
+  "force_sub_channel_btn": "📢 Channel {num}",
+  "force_sub_check_btn": "✅ Check",
+  "force_sub_still_not": "❌ You haven't joined all channels yet. Join them and check again.",
+  "force_sub_passed": "✅ Confirmed! You can now use the bot.",
+
+  "menu_btn_contact_admin": "✉️ Contact admin",
+  "menu_btn_info": "ℹ️ About the bot",
+  "menu_btn_cancel": "❌ Cancel",
+
+  "info_text": "ℹ️ **About this bot**\n\n📸 Send an image → I'll make a PDF.\n📄 Send a PDF → I'll return each page as an image.\n\nYou can send several images in a row, then press \"✅ Done\". If you don't send a new image or press the button within 30 seconds — the PDF is created automatically.\n\n👨‍💻 Admin: @{admin_username}",
+
+  "collecting_status": "📸 Images received: {count}\n\nYou can send more, or press \"✅ Done\".\n⏱ If no new image arrives within 30 seconds — the PDF is created automatically.",
+  "collecting_done_btn": "✅ Done",
+  "collecting_cancel_btn": "❌ Cancel",
+  "ask_filename": "✏️ Type a name for the PDF (within 30 seconds):\n\nIf you don't, a default name will be used.",
+  "pdf_ready_caption": "✅ PDF ready: {filename}\n\n🤖 @{bot_username}",
+  "pdf_building": "⏳ Building the PDF...",
+  "pdf_cancelled": "❌ Cancelled, collected images were discarded.",
+
+  "pdf_processing": "⏳ PDF received, splitting into pages... Please wait.",
+  "pdf_done_caption": "✅ Done! {pages} pages.\n\n🤖 @{bot_username}",
+  "pdf_read_error": "❌ Couldn't read this file. It might be corrupted or protected.",
+
+  "limit_create_reached": "⚠️ You've reached your daily PDF creation limit ({used}/{limit}). Try again tomorrow.",
+  "limit_read_reached": "⚠️ You've reached your daily PDF reading limit ({used}/{limit}). Try again tomorrow.",
+
+  "ask_message_for_admin": "✉️ Write your message (text, photo, video or file) — the admin will reply soon.",
+  "message_sent_to_admin": "✅ Your message was sent to the admin.",
+  "admin_reply_prefix": "✉️ **Admin reply:**",
+  "admin_new_message_prefix": "✉️ New message — {name} (@{username}, ID: {id}):",
+
+  "admin_only": "⛔ This command is for admins only.",
+  "admin_panel_title": "🛠 **Admin panel**",
+  "admin_btn_stats": "📊 Statistics",
+  "admin_btn_users": "👥 Users",
+  "admin_btn_top_creators": "🏆 Top PDF creators",
+  "admin_btn_top_readers": "📖 Top PDF readers",
+  "admin_btn_weekly": "📈 7-day stats",
+  "admin_btn_limits": "⚙️ Limits for everyone",
+  "admin_btn_broadcast": "📣 Broadcast",
+  "admin_btn_channels": "📢 Required channels",
+  "admin_btn_db_check": "🗄 Check database",
+  "admin_btn_memory": "🧹 Memory",
+  "admin_btn_back": "⬅️ Back",
+
+  "admin_stats_text": "📊 **Overview**\n\n👥 Total users: {total_users}\n🆕 New today: {today_new}\n\n📄 PDFs today: {today_pdfs}\n📄 PDFs total: {total_pdfs}\n📖 PDFs read total: {total_read}\n💾 Total data processed: {total_mb} MB\n\n🌐 By language: 🇺🇿 {lang_uz} | 🇬🇧 {lang_en}",
+
+  "admin_search_prompt": "🔎 Type a user ID or username:",
+  "admin_search_not_found": "❌ Nothing found.",
+  "admin_user_card": "👤 **User**\n\nID: `{id}`\nUsername: @{username}\nName: {name}\nLanguage: {lang}\nJoined: {joined}\nStatus: {status}\n\n📸 Images sent: {images_sent}\n📄 PDFs created (total/today): {pdfs_created} / {pdfs_created_today}\n📖 PDFs read (total/today): {pdfs_read} / {pdfs_read_today}\n\n⚙️ Personal limit — create: {create_limit}, read: {read_limit} (0 = unlimited)",
+  "admin_btn_ban": "🚫 Ban",
+  "admin_btn_unban": "✅ Unban",
+  "admin_btn_message_user": "✉️ Message",
+  "admin_btn_limit_create": "📄 Create limit",
+  "admin_btn_limit_read": "📖 Read limit",
+  "admin_banned_user": "🚫 User banned.",
+  "admin_unbanned_user": "✅ User unbanned.",
+  "admin_ask_user_message": "✏️ Write the message to send to this user:",
+  "admin_message_sent": "✅ Message sent.",
+  "admin_ask_limit_value": "✏️ Enter the new daily limit as a number (0 = unlimited):",
+  "admin_limit_set": "✅ Limit set: {value}",
+
+  "admin_weekly_text": "📈 **Last 7 days**\n\n{rows}",
+  "admin_weekly_row": "{day}: 🆕{new_users} 📄{pdfs_created} 📖{pdfs_read} 📸{images_sent}",
+
+  "admin_limits_text": "⚙️ **Limits for everyone**\n\nCurrent values (0 = unlimited):\n📄 Daily PDF creation: {create_limit}\n📖 Daily PDF reading: {read_limit}\n🖼 Max images per PDF: {max_images}",
+  "admin_btn_set_create_limit": "📄 Create limit",
+  "admin_btn_set_read_limit": "📖 Read limit",
+  "admin_btn_set_max_images": "🖼 Max images (per PDF)",
+  "admin_ask_global_limit": "✏️ Enter the new value as a number (0 = unlimited) — applied to ALL users immediately:",
+  "admin_global_limit_set": "✅ Set and applied to everyone: {value}",
+
+  "admin_broadcast_prompt": "📣 Send the message you want to broadcast (text, photo or video, with a caption if you like):",
+  "admin_broadcast_sending": "⏳ Sending... ({sent}/{total})",
+  "admin_broadcast_done": "✅ Sent: {sent}/{total} ({failed} failed)",
+
+  "admin_channels_text": "📢 **Required channels**\n\n{list}",
+  "admin_channels_empty": "No channels added yet.",
+  "admin_channel_row": "{num}. {title} — joined: {count}",
+  "admin_btn_add_channel": "➕ Add channel",
+  "admin_btn_remove_channel": "➖ Remove channel",
+  "admin_ask_channel": "✏️ To add:\n\n• Telegram channel — send @username or a t.me/... link (the bot must be admin there)\n• External link (Instagram etc.) — send \"Name | https://link\" or just the link\n\nAn external link is NEVER checked and never blocks the bot, it's just always shown in the list.",
+  "admin_channel_added": "✅ Channel added.",
+  "admin_channel_add_error": "❌ Couldn't add this channel. Make sure the bot is an admin there.",
+  "admin_ask_remove_channel": "✏️ Enter the number of the channel to remove:",
+  "admin_channel_removed": "✅ Channel removed.",
+
+  "admin_db_ok": "✅ Turso database connection: WORKING",
+  "admin_db_fail": "❌ Turso database connection: FAILED (not connected)",
+
+  "admin_memory_text": "🧹 **Memory — leftover temporary files**\n\n{list}\n\nTotal: {total_count} files, {total_mb} MB",
+  "admin_memory_empty": "Nothing here — memory is clean. ✅",
+  "admin_memory_row": "👤 `{id}` — {count} files, {mb} MB",
+  "admin_btn_clear_all_memory": "🗑 Clear everything",
+  "admin_memory_cleared": "✅ All temporary files cleared."
+}
