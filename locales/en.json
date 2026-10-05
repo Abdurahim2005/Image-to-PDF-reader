@@ -18,7 +18,8 @@
 
   "info_text": "ℹ️ **About this bot**\n\n📸 Send an image → I'll make a PDF.\n📄 Send a PDF → I'll return each page as an image.\n\nYou can send several images in a row, then press \"✅ Done\". If you don't send a new image or press the button within 30 seconds — the PDF is created automatically.\n\n👨‍💻 Admin: @{admin_username}",
 
-  "collecting_status": "📸 Images received: {count}\n\nYou can send more, or press \"✅ Done\".\n⏱ If no new image arrives within 30 seconds — the PDF is created automatically.",
+  "collecting_status": "📸 Images received: {count}{max_suffix}\n\nYou can send more, or press \"✅ Done\".\n⏱ If no new image arrives within 30 seconds — the PDF is created automatically.",
+  "collecting_status_max_suffix": "/{max}",
   "collecting_done_btn": "✅ Done",
   "collecting_cancel_btn": "❌ Cancel",
   "ask_filename": "✏️ Type a name for the PDF (within 30 seconds):\n\nIf you don't, a default name will be used.",
@@ -36,6 +37,24 @@
 
   "limit_create_reached": "⚠️ You've reached your daily PDF creation limit ({used}/{limit}). Try again tomorrow.",
   "limit_read_reached": "⚠️ You've reached your daily PDF reading limit ({used}/{limit}). Try again tomorrow.",
+  "max_images_reached": "⚠️ You've reached the max number of images for one PDF ({max}). Press \"✅ Done\".",
+
+  "limit_status_after_create": "📊 Today's PDF creation limit: {used}/{limit}\n🔋 {left} left.",
+  "limit_status_after_read": "📊 Today's PDF reading limit: {used}/{limit}\n🔋 {left} left.",
+  "premium_ad": "🌟 Your daily limit is used up!\n\nUpgrade to Premium for unlimited PDF creation and reading, faster processing, and more!\n\n_(Premium is launching soon)_",
+  "premium_btn_test": "🌟 About Premium (test)",
+  "premium_info_popup": "🌟 Premium is launching soon — unlimited PDFs, faster processing, and more!",
+
+  "menu_btn_stats": "📊 My stats",
+  "menu_btn_language": "🌐 Til / Language",
+  "menu_btn_profile": "👤 My profile",
+
+  "user_stats_text": "📊 **My stats**\n\n📸 Images sent total: {images_sent}\n📄 PDFs created (total/today): {pdfs_created} / {pdfs_created_today}\n📖 PDFs read (total/today): {pdfs_read} / {pdfs_read_today}",
+
+  "profile_text": "👤 **My profile**\n\n🆔 ID: `{id}`\n👋 Name: {name}\n⭐ Tier: {tier}\n\n📄 Daily PDF creation: {used_create}/{limit_create}\n📖 Daily PDF reading: {used_read}/{limit_read}\n🖼 Max images per PDF: {max_images}",
+  "profile_tier_standard": "Standard",
+  "profile_tier_premium": "Premium ⭐",
+  "profile_unlimited": "unlimited",
 
   "ask_message_for_admin": "✉️ Write your message (text, photo, video or file) — the admin will reply soon.",
   "message_sent_to_admin": "✅ Your message was sent to the admin.",
@@ -45,7 +64,9 @@
   "admin_only": "⛔ This command is for admins only.",
   "admin_panel_title": "🛠 **Admin panel**",
   "admin_btn_stats": "📊 Statistics",
-  "admin_btn_users": "👥 Users",
+  "admin_btn_users": "📋 List",
+  "admin_btn_search": "🔎 Search",
+  "admin_users_list_title": "📋 **Users** (total: {total})\n\nShowing: {from_n}-{to_n}\n\nSelect one:",
   "admin_btn_top_creators": "🏆 Top PDF creators",
   "admin_btn_top_readers": "📖 Top PDF readers",
   "admin_btn_weekly": "📈 7-day stats",
@@ -60,7 +81,7 @@
 
   "admin_search_prompt": "🔎 Type a user ID or username:",
   "admin_search_not_found": "❌ Nothing found.",
-  "admin_user_card": "👤 **User**\n\nID: `{id}`\nUsername: @{username}\nName: {name}\nLanguage: {lang}\nJoined: {joined}\nStatus: {status}\n\n📸 Images sent: {images_sent}\n📄 PDFs created (total/today): {pdfs_created} / {pdfs_created_today}\n📖 PDFs read (total/today): {pdfs_read} / {pdfs_read_today}\n\n⚙️ Personal limit — create: {create_limit}, read: {read_limit} (0 = unlimited)",
+  "admin_user_card": "👤 **User**\n\nID: `{id}`\nUsername: @{username}\nName: {name}\nLanguage: {user_lang}\nJoined: {joined}\nStatus: {status}\n\n📸 Images sent: {images_sent}\n📄 PDFs created (total/today): {pdfs_created} / {pdfs_created_today}\n📖 PDFs read (total/today): {pdfs_read} / {pdfs_read_today}\n\n⚙️ Personal limit — create: {create_limit}, read: {read_limit} (0 = unlimited)",
   "admin_btn_ban": "🚫 Ban",
   "admin_btn_unban": "✅ Unban",
   "admin_btn_message_user": "✉️ Message",
@@ -73,7 +94,7 @@
   "admin_ask_limit_value": "✏️ Enter the new daily limit as a number (0 = unlimited):",
   "admin_limit_set": "✅ Limit set: {value}",
 
-  "admin_weekly_text": "📈 **Last 7 days**\n\n{rows}",
+  "admin_weekly_text": "📈 **Last 7 days**\n\n🆕 new users | 📄 PDFs created | 📖 PDFs read | 📸 images sent\n\n{rows}",
   "admin_weekly_row": "{day}: 🆕{new_users} 📄{pdfs_created} 📖{pdfs_read} 📸{images_sent}",
 
   "admin_limits_text": "⚙️ **Limits for everyone**\n\nCurrent values (0 = unlimited):\n📄 Daily PDF creation: {create_limit}\n📖 Daily PDF reading: {read_limit}\n🖼 Max images per PDF: {max_images}",
