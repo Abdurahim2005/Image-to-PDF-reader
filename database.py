@@ -22,11 +22,24 @@ import config
 _client: libsql_client.Client | None = None
 
 
+def _http_url(url: str) -> str:
+    """`libsql_client` ikki transportni qo'llab-quvvatlaydi: WebSocket
+    (sxema `libsql://` yoki `wss://`) va HTTP (sxema `https://`).
+    Ba'zi Turso serverlari/hududlarida WebSocket handshake 400 xato
+    bilan rad etilishi mumkin -- shuning uchun BARQARORROQ bo'lgan
+    HTTP transportini MAJBURAN ishlatamiz: `libsql://...` -> `https://...`."""
+    if url.startswith("libsql://"):
+        return "https://" + url[len("libsql://"):]
+    if url.startswith("wss://"):
+        return "https://" + url[len("wss://"):]
+    return url
+
+
 def get_client() -> libsql_client.Client:
     global _client
     if _client is None:
         _client = libsql_client.create_client_sync(
-            url=config.TURSO_DATABASE_URL,
+            url=_http_url(config.TURSO_DATABASE_URL),
             auth_token=config.TURSO_AUTH_TOKEN,
         )
     return _client
