@@ -14,6 +14,7 @@
   "menu_btn_contact_admin": "✉️ Contact admin",
   "menu_btn_info": "ℹ️ About the bot",
   "menu_btn_cancel": "❌ Cancel",
+  "menu_btn_admin_panel": "🛠 Admin panel",
 
   "info_text": "ℹ️ **About this bot**\n\n📸 Send an image → I'll make a PDF.\n📄 Send a PDF → I'll return each page as an image.\n\nYou can send several images in a row, then press \"✅ Done\". If you don't send a new image or press the button within 30 seconds — the PDF is created automatically.\n\n👨‍💻 Admin: @{admin_username}",
 
@@ -28,6 +29,10 @@
   "pdf_processing": "⏳ PDF received, splitting into pages... Please wait.",
   "pdf_done_caption": "✅ Done! {pages} pages.\n\n🤖 @{bot_username}",
   "pdf_read_error": "❌ Couldn't read this file. It might be corrupted or protected.",
+
+  "busy_awaiting_filename": "⚠️ Please enter a name for the PDF first (or wait 30 seconds for the default name) — you can do something else after that.",
+  "busy_building": "⚠️ The PDF is being built right now, please wait — you can start a new action once it's done.",
+  "busy_reading_pdf": "⚠️ The previous PDF is still being processed, please wait — you can send a new file once it's done.",
 
   "limit_create_reached": "⚠️ You've reached your daily PDF creation limit ({used}/{limit}). Try again tomorrow.",
   "limit_read_reached": "⚠️ You've reached your daily PDF reading limit ({used}/{limit}). Try again tomorrow.",
