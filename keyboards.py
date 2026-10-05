@@ -12,14 +12,14 @@ def language_kb() -> InlineKeyboardMarkup:
     ])
 
 
-def main_menu_kb(lang: str) -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        [
-            [KeyboardButton(t(lang, "menu_btn_contact_admin"))],
-            [KeyboardButton(t(lang, "menu_btn_info"))],
-        ],
-        resize_keyboard=True,
-    )
+def main_menu_kb(lang: str, is_admin: bool = False) -> ReplyKeyboardMarkup:
+    rows = [
+        [KeyboardButton(t(lang, "menu_btn_contact_admin"))],
+        [KeyboardButton(t(lang, "menu_btn_info"))],
+    ]
+    if is_admin:
+        rows.append([KeyboardButton(t(lang, "menu_btn_admin_panel"))])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
 def cancel_kb(lang: str) -> ReplyKeyboardMarkup:

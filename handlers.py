@@ -45,12 +45,27 @@ admin_flow: dict[int, dict] = {}       # admin_id -> {"action": ..., ...}
 _photo_locks: dict[int, asyncio.Lock] = {}
 
 
+# PDF o'qish (sahifalarga ajratish) jarayonida bo'lgan foydalanuvchilar
+# -- shu orada yangi PDF yuborsa, "band" deb ogohlantiramiz.
+_reading_pdf_users: set[int] = set()
+
+
 def _get_photo_lock(uid: int) -> asyncio.Lock:
     lock = _photo_locks.get(uid)
     if lock is None:
         lock = asyncio.Lock()
         _photo_locks[uid] = lock
     return lock
+
+
+async def _auto_delete_later(client: Client, chat_id: int, message_id: int, delay: float):
+    """Ogohlantirish xabarlari ("band" degan xabarlar) chatda abadiy
+    qolib ketmasligi uchun -- bir necha soniyadan keyin o'zi o'chadi."""
+    await asyncio.sleep(delay)
+    try:
+        await client.delete_messages(chat_id, message_id)
+    except Exception:
+        pass
 
 
 def is_admin(uid: int) -> bool:
@@ -225,8 +240,15 @@ async def _handle_photo(client: Client, message: Message):
         state = collect_state.get(uid)
         if state and state["stage"] in ("awaiting_filename", "building"):
             # PDF qurilayotganda yoki nom kutilayotganda rasm yuborilsa
-            # -- e'tiborsiz qoldiramiz ("bir ish payti boshqasi
-            # bajarilmaydi").
+            # -- foydalanuvchiga TUSHUNARLI ogohlantirish beramiz (jim
+            # qoldirmaymiz), rasmni esa qabul qilmaymiz.
+            key = "busy_building" if state["stage"] == "building" else "busy_awaiting_filename"
+            try:
+                await message.delete()
+            except Exception:
+                pass
+            warn = await client.send_message(message.chat.id, t(lang, key))
+            asyncio.create_task(_auto_delete_later(client, warn.chat.id, warn.id, 6))
             return
 
         temp_dir = _user_temp_dir(uid)
@@ -448,8 +470,27 @@ async def _handle_document(client: Client, message: Message):
         return
 
     if uid in collect_state:
-        # Rasm yig'ish/nom kutish jarayoni band -- "bir ish payti
-        # boshqasi bajarilmaydi".
+        # Rasm yig'ish/nom kutish/PDF qurish jarayoni band -- "bir ish
+        # payti boshqasi bajarilmaydi" -- foydalanuvchiga buni aytamiz.
+        stage = collect_state[uid]["stage"]
+        if stage == "building":
+            key = "busy_building"
+        else:
+            # "collecting" yoki "awaiting_filename" -- ikkalasida ham
+            # foydalanuvchi hali rasm to'plamini yakunlamagan, shuning
+            # uchun bir xil "avval tugating" ogohlantirishi yetarli.
+            key = "busy_awaiting_filename"
+        try:
+            await message.delete()
+        except Exception:
+            pass
+        warn = await client.send_message(message.chat.id, t(lang, key))
+        asyncio.create_task(_auto_delete_later(client, warn.chat.id, warn.id, 6))
+        return
+
+    if uid in _reading_pdf_users:
+        warn = await client.send_message(message.chat.id, t(lang, "busy_reading_pdf"))
+        asyncio.create_task(_auto_delete_later(client, warn.chat.id, warn.id, 6))
         return
 
     allowed, used, limit = await database.can_read_pdf(uid)
@@ -457,6 +498,14 @@ async def _handle_document(client: Client, message: Message):
         await message.reply(t(lang, "limit_read_reached", used=used, limit=limit))
         return
 
+    _reading_pdf_users.add(uid)
+    try:
+        await _process_incoming_pdf(client, message, uid, lang)
+    finally:
+        _reading_pdf_users.discard(uid)
+
+
+async def _process_incoming_pdf(client: Client, message: Message, uid: int, lang: str):
     status = await message.reply(t(lang, "pdf_processing"))
     temp_dir = _user_temp_dir(uid)
     pdf_path = os.path.join(temp_dir, f"incoming_{int(time.time() * 1000)}.pdf")
@@ -540,7 +589,7 @@ async def _forward_to_admin(client: Client, message: Message):
     except Exception:
         pass
 
-    await message.reply(t(lang, "message_sent_to_admin"), reply_markup=keyboards.main_menu_kb(lang))
+    await message.reply(t(lang, "message_sent_to_admin"), reply_markup=keyboards.main_menu_kb(lang, is_admin(uid)))
 
 
 # ════════════════════════════════════════════════════════════
@@ -604,7 +653,7 @@ def _register_user_handlers(client: Client) -> None:
             return
         await m.reply(
             t(lang, "start_text", name=m.from_user.first_name or ""),
-            reply_markup=keyboards.main_menu_kb(lang),
+            reply_markup=keyboards.main_menu_kb(lang, is_admin(uid)),
         )
 
     @client.on_callback_query(filters.regex(r"^lang:(uz|en)$"))
@@ -621,7 +670,7 @@ def _register_user_handlers(client: Client) -> None:
             return
         await c.send_message(
             call.message.chat.id, t(lang, "start_text", name=call.from_user.first_name or ""),
-            reply_markup=keyboards.main_menu_kb(lang),
+            reply_markup=keyboards.main_menu_kb(lang, is_admin(uid)),
         )
 
     @client.on_callback_query(filters.regex(r"^force_sub:check$"))
@@ -637,7 +686,7 @@ def _register_user_handlers(client: Client) -> None:
             await call.message.delete()
         except Exception:
             pass
-        await c.send_message(call.message.chat.id, t(lang, "force_sub_passed"), reply_markup=keyboards.main_menu_kb(lang))
+        await c.send_message(call.message.chat.id, t(lang, "force_sub_passed"), reply_markup=keyboards.main_menu_kb(lang, is_admin(uid)))
 
     @client.on_callback_query(filters.regex(r"^collect:done$"))
     async def collect_done_cb(c, call: CallbackQuery):
@@ -673,9 +722,20 @@ def _register_user_handlers(client: Client) -> None:
         was_collecting = uid in collect_state
         await _cancel_collecting(uid, delete_status=True, client=c)
         if was_collecting:
-            await m.reply(t(lang, "pdf_cancelled"), reply_markup=keyboards.main_menu_kb(lang))
+            await m.reply(t(lang, "pdf_cancelled"), reply_markup=keyboards.main_menu_kb(lang, is_admin(uid)))
         else:
-            await m.reply(t(lang, "start_text", name=m.from_user.first_name or ""), reply_markup=keyboards.main_menu_kb(lang))
+            await m.reply(t(lang, "start_text", name=m.from_user.first_name or ""), reply_markup=keyboards.main_menu_kb(lang, is_admin(uid)))
+
+    @client.on_message(filters.private & filters.text & filters.create(
+        lambda _, __, m: m.text in (t("uz", "menu_btn_admin_panel"), t("en", "menu_btn_admin_panel"))
+    ))
+    async def menu_admin_panel(c, m):
+        uid = m.from_user.id
+        lang = await _lang(uid)
+        if not is_admin(uid):
+            return
+        from admin_panel import show_panel
+        await show_panel(c, m.chat.id, lang)
 
     @client.on_message(filters.private & filters.photo)
     async def photo_msg(c, m):
