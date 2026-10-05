@@ -14,12 +14,19 @@ def language_kb() -> InlineKeyboardMarkup:
 
 def main_menu_kb(lang: str, is_admin: bool = False) -> ReplyKeyboardMarkup:
     rows = [
-        [KeyboardButton(t(lang, "menu_btn_contact_admin"))],
+        [KeyboardButton(t(lang, "menu_btn_profile")), KeyboardButton(t(lang, "menu_btn_stats"))],
+        [KeyboardButton(t(lang, "menu_btn_contact_admin")), KeyboardButton(t(lang, "menu_btn_language"))],
         [KeyboardButton(t(lang, "menu_btn_info"))],
     ]
     if is_admin:
         rows.append([KeyboardButton(t(lang, "menu_btn_admin_panel"))])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
+
+
+def premium_ad_kb(lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(t(lang, "premium_btn_test"), callback_data="premium:info")]
+    ])
 
 
 def cancel_kb(lang: str) -> ReplyKeyboardMarkup:
@@ -35,24 +42,47 @@ def collecting_kb(lang: str) -> InlineKeyboardMarkup:
     ])
 
 
+def channel_ref_and_url(channel_id: str) -> tuple[str, str | None]:
+    """`channel_id` ustunidagi qiymatni ikkiga ajratadi:
+    - `ref` -- a'zolikni TEKSHIRISH uchun (chat_id yoki @username)
+    - `url` -- tugmada ko'rsatiladigan HAVOLA (bo'lmasa None)
+
+    Qo'llab-quvvatlanadigan formatlar:
+    - "ext:<havola>"              -- tashqi havola (ref == url == havola)
+    - "<chat_id>|<invite_link>"   -- private kanal (admin_panel shunday saqlaydi)
+    - "@username"                 -- public kanal, username bilan
+    - "<chat_id>"                 -- havolasiz (eski yozuvlar -- tugma chiqmaydi)
+    """
+    if channel_id.startswith("ext:"):
+        url = channel_id[len("ext:"):]
+        return url, url
+    if "|" in channel_id:
+        ref, invite_link = channel_id.split("|", 1)
+        return ref, (invite_link or None)
+    if channel_id.startswith("@"):
+        return channel_id, f"https://t.me/{channel_id.lstrip('@')}"
+    if channel_id.lstrip("-").isdigit():
+        return channel_id, None
+    return channel_id, f"https://t.me/{channel_id}"
+
+
 def force_sub_kb(channels: list[dict], lang: str) -> InlineKeyboardMarkup:
     """`channels` -- required_channels jadvalidan qatorlar ro'yxati.
     Haqiqiy Telegram kanallar avval, tashqi havolalar OXIRIDA chiqadi
     (chaqiruvchi tomonda shu tartibda beriladi)."""
     rows = []
     for idx, ch in enumerate(channels, start=1):
-        channel_id = str(ch["channel_id"])
-        if channel_id.startswith("ext:"):
-            url = channel_id[len("ext:"):]
-        elif channel_id.startswith("@"):
-            url = f"https://t.me/{channel_id.lstrip('@')}"
-        elif channel_id.lstrip("-").isdigit():
-            url = None  # private channel invite link unknown; fall back to title
-        else:
-            url = f"https://t.me/{channel_id}"
+        _, url = channel_ref_and_url(str(ch["channel_id"]))
         label = ch.get("title") or t(lang, "force_sub_channel_btn", num=idx)
         if url:
             rows.append([InlineKeyboardButton(f"📢 {label}", url=url)])
+        else:
+            # Havola topilmagan (eski yozuv) -- hech bo'lmasa nomini
+            # ko'rsatuvchi bosilmaydigan tugma o'rniga, oddiy matn
+            # qatoridan foydalanish mumkin emas (InlineKeyboard faqat
+            # tugma qabul qiladi) -- shuning uchun callback_data bilan
+            # "ma'lumot" tugmasi qo'yamiz, bosilsa hech narsa qilmaydi.
+            rows.append([InlineKeyboardButton(f"📢 {label}", callback_data="force_sub:noop")])
     rows.append([InlineKeyboardButton(t(lang, "force_sub_check_btn"), callback_data="force_sub:check")])
     return InlineKeyboardMarkup(rows)
 
@@ -60,7 +90,8 @@ def force_sub_kb(channels: list[dict], lang: str) -> InlineKeyboardMarkup:
 def admin_panel_kb(lang: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(t(lang, "admin_btn_stats"), callback_data="adm:stats")],
-        [InlineKeyboardButton(t(lang, "admin_btn_users"), callback_data="adm:users")],
+        [InlineKeyboardButton(t(lang, "admin_btn_search"), callback_data="adm:search"),
+         InlineKeyboardButton(t(lang, "admin_btn_users"), callback_data="adm:users:0")],
         [InlineKeyboardButton(t(lang, "admin_btn_top_creators"), callback_data="adm:top_creators"),
          InlineKeyboardButton(t(lang, "admin_btn_top_readers"), callback_data="adm:top_readers")],
         [InlineKeyboardButton(t(lang, "admin_btn_weekly"), callback_data="adm:weekly")],
@@ -76,17 +107,43 @@ def admin_back_kb(lang: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[InlineKeyboardButton(t(lang, "admin_btn_back"), callback_data="adm:panel")]])
 
 
-def admin_user_card_kb(lang: str, telegram_id: int, is_banned: bool) -> InlineKeyboardMarkup:
+def admin_users_list_kb(lang: str, users: list[dict], offset: int, total: int, limit: int = 10) -> InlineKeyboardMarkup:
+    """Foydalanuvchilar ro'yxati -- har biri alohida tugma (bosilsa
+    kartochkasi ochiladi), pastda oldingi/keyingi sahifa va orqaga."""
+    rows = []
+    for u in users:
+        uname = u.get("username")
+        label = f"@{uname}" if uname else (u.get("first_name") or str(u["telegram_id"]))
+        if u.get("is_banned"):
+            label = f"🚫 {label}"
+        rows.append([InlineKeyboardButton(label, callback_data=f"adm:ucard:{u['telegram_id']}:{offset}")])
+
+    nav = []
+    if offset > 0:
+        nav.append(InlineKeyboardButton("⬅️", callback_data=f"adm:users:{max(0, offset - limit)}"))
+    if offset + limit < total:
+        nav.append(InlineKeyboardButton("➡️", callback_data=f"adm:users:{offset + limit}"))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(t(lang, "admin_btn_back"), callback_data="adm:panel")])
+    return InlineKeyboardMarkup(rows)
+
+
+def admin_user_card_kb(lang: str, telegram_id: int, is_banned: bool, back_offset: int | None = None) -> InlineKeyboardMarkup:
+    """`back_offset` berilsa -- 'Orqaga' tugmasi ro'yxatning O'SHA
+    sahifasiga qaytaradi (qidiruv natijasidan kelingan bo'lsa esa,
+    `back_offset=None`, oddiy admin panelga qaytadi)."""
     ban_btn = (
         InlineKeyboardButton(t(lang, "admin_btn_unban"), callback_data=f"adm:unban:{telegram_id}")
         if is_banned else
         InlineKeyboardButton(t(lang, "admin_btn_ban"), callback_data=f"adm:ban:{telegram_id}")
     )
+    back_cb = f"adm:users:{back_offset}" if back_offset is not None else "adm:panel"
     return InlineKeyboardMarkup([
         [ban_btn, InlineKeyboardButton(t(lang, "admin_btn_message_user"), callback_data=f"adm:msg:{telegram_id}")],
         [InlineKeyboardButton(t(lang, "admin_btn_limit_create"), callback_data=f"adm:ulimit:create:{telegram_id}"),
          InlineKeyboardButton(t(lang, "admin_btn_limit_read"), callback_data=f"adm:ulimit:read:{telegram_id}")],
-        [InlineKeyboardButton(t(lang, "admin_btn_back"), callback_data="adm:panel")],
+        [InlineKeyboardButton(t(lang, "admin_btn_back"), callback_data=back_cb)],
     ])
 
 

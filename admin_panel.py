@@ -101,6 +101,34 @@ async def handle_admin_text(client: Client, message: Message) -> bool:
     return False
 
 
+async def handle_admin_media(client: Client, message: Message) -> bool:
+    """`handle_admin_text`ning rasm/video/fayl uchun hamkasbi --
+    'broadcast' va 'message_user' amallari matnga bog'liq emas
+    (`message.copy()` har qanday turdagi xabarni nusxalaydi), shuning
+    uchun shu ikkisini bu yerda ham qo'llab-quvvatlaymiz. Boshqa
+    amallar (qidiruv, limit kiritish va h.k.) faqat matn kutadi,
+    shuning uchun bu yerda e'tiborsiz qoldiriladi (False qaytariladi)."""
+    uid = message.from_user.id
+    flow = handlers.admin_flow.get(uid)
+    if not flow:
+        return False
+    action = flow.get("action")
+    lang = await _lang(uid)
+
+    if action == "broadcast":
+        handlers.admin_flow.pop(uid, None)
+        await _do_broadcast(client, message, lang)
+        return True
+
+    if action == "message_user":
+        handlers.admin_flow.pop(uid, None)
+        target_uid = flow["target_uid"]
+        await _send_admin_message_to_user(client, target_uid, message, lang)
+        return True
+
+    return False
+
+
 async def handle_admin_reply_text(client: Client, message: Message) -> bool:
     """Admin 'Javob yozish' tugmasidan so'ng oddiy xabar yozganda."""
     uid = message.from_user.id
@@ -202,7 +230,8 @@ async def _do_user_search(client: Client, chat_id: int, lang: str, query: str):
         await _show_user_card(client, chat_id, lang, r["telegram_id"])
 
 
-async def _show_user_card(client: Client, chat_id: int, lang: str, target_uid: int, edit_msg_id: int | None = None):
+async def _show_user_card(client: Client, chat_id: int, lang: str, target_uid: int,
+                           edit_msg_id: int | None = None, back_offset: int | None = None):
     user = await database.get_user(target_uid)
     if not user:
         await client.send_message(chat_id, t(lang, "admin_search_not_found"))
@@ -211,16 +240,29 @@ async def _show_user_card(client: Client, chat_id: int, lang: str, target_uid: i
     text = t(
         lang, "admin_user_card",
         id=target_uid, username=user.get("username") or "—", name=user.get("first_name") or "—",
-        lang=user.get("language") or "—", joined=user.get("joined_at") or "—", status=status,
+        user_lang=user.get("language") or "—", joined=user.get("joined_at") or "—", status=status,
         images_sent=user.get("images_sent") or 0,
         pdfs_created=user.get("pdfs_created") or 0, pdfs_created_today=user.get("pdfs_created_today") or 0,
         pdfs_read=user.get("pdfs_read") or 0, pdfs_read_today=user.get("pdfs_read_today") or 0,
         create_limit=user.get("daily_create_limit") or 0, read_limit=user.get("daily_read_limit") or 0,
     )
-    kb = keyboards.admin_user_card_kb(lang, target_uid, bool(user.get("is_banned")))
+    kb = keyboards.admin_user_card_kb(lang, target_uid, bool(user.get("is_banned")), back_offset)
     if edit_msg_id:
         try:
             await client.edit_message_text(chat_id, edit_msg_id, text, reply_markup=kb)
+            return
+        except Exception:
+            pass
+    await client.send_message(chat_id, text, reply_markup=kb)
+
+
+async def _show_users_list(client: Client, chat_id: int, lang: str, offset: int, msg_id: int | None = None):
+    users, total = await database.list_users_page(offset, limit=10)
+    text = t(lang, "admin_users_list_title", total=total, from_n=offset + 1, to_n=min(offset + len(users), total))
+    kb = keyboards.admin_users_list_kb(lang, users, offset, total)
+    if msg_id:
+        try:
+            await client.edit_message_text(chat_id, msg_id, text, reply_markup=kb)
             return
         except Exception:
             pass
@@ -301,7 +343,25 @@ async def _do_add_channel(client: Client, message: Message, lang: str):
         ref = "@" + ref.split("t.me/")[-1].lstrip("@")
     try:
         chat = await client.get_chat(ref)
-        await database.add_required_channel(str(chat.id), chat.title or ref)
+        # Tugma uchun havola kerak: agar kanal PUBLIC bo'lsa (username
+        # bor) -- t.me/username ishlatamiz; agar PRIVATE bo'lsa --
+        # bot admin ekanligi sababli invite link yaratib olamiz.
+        # Havola topilmasa ham kanalni saqlaymiz (tugma faqat nom
+        # bilan ko'rinadi, lekin baribir tekshiriladi).
+        if chat.username:
+            invite_link = f"https://t.me/{chat.username}"
+        else:
+            try:
+                invite_link = await client.export_chat_invite_link(chat.id)
+            except Exception:
+                invite_link = ""
+        # `channel_id` ustuniga TEKSHIRISH uchun haqiqiy chat.id, lekin
+        # tugma havolasini topish uchun uni alohida -- `invite:` prefiksi
+        # bilan title maydonining davomida emas, balki saqlashning eng
+        # sodda yo'li: channel_id'ni "<chat.id>|<invite_link>" qilib
+        # saqlaymiz, keyboard shu yerdan ajratib oladi.
+        stored_id = f"{chat.id}|{invite_link}" if invite_link else str(chat.id)
+        await database.add_required_channel(stored_id, chat.title or ref)
         await message.reply(t(lang, "admin_channel_added"))
     except Exception:
         await message.reply(t(lang, "admin_channel_add_error"))
@@ -408,8 +468,16 @@ def register(client: Client) -> None:
         elif data == "adm:top_readers":
             await _show_top_readers(c, chat_id, lang, msg_id)
 
-        elif data == "adm:users":
+        elif data == "adm:search":
             await _ask_search(c, chat_id, lang, uid, msg_id)
+
+        elif data.startswith("adm:users:"):
+            offset = int(data.split(":")[2])
+            await _show_users_list(c, chat_id, lang, offset, msg_id)
+
+        elif data.startswith("adm:ucard:"):
+            _, _, target_s, back_offset_s = data.split(":")
+            await _show_user_card(c, chat_id, lang, int(target_s), edit_msg_id=msg_id, back_offset=int(back_offset_s))
 
         elif data == "adm:limits":
             await _show_limits(c, chat_id, lang, msg_id)

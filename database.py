@@ -303,6 +303,13 @@ async def _reset_daily_counter_if_needed(telegram_id: int, field_count: str, fie
         )
 
 
+async def get_max_images_per_pdf(telegram_id: int) -> int:
+    """0 = cheklovsiz. Global sozlamadan olinadi (hozircha foydalanuvchiga
+    xos emas)."""
+    s = await get_settings()
+    return s.get("max_images_per_pdf") or 0
+
+
 async def can_create_pdf(telegram_id: int) -> tuple[bool, int, int]:
     """Qaytaradi: (ruxsat_bor, bugungi_son, limit). limit=0 -- cheklovsiz."""
     await _reset_daily_counter_if_needed(telegram_id, "pdfs_created_today", "pdfs_created_date")
@@ -449,6 +456,21 @@ async def list_all_user_ids() -> list[int]:
     c = get_client()
     res = await c.execute("SELECT telegram_id FROM users WHERE is_banned = 0")
     return [r[0] for r in res.rows]
+
+
+async def list_users_page(offset: int, limit: int = 10) -> tuple[list[dict], int]:
+    """Admin panel -- 'Foydalanuvchilar' ro'yxati uchun SAHIFALAB
+    (oxirgi qo'shilgandan boshlab) chiqaradi. Qaytaradi:
+    (shu sahifadagi foydalanuvchilar, JAMI foydalanuvchi soni)."""
+    c = get_client()
+    total = (await c.execute("SELECT COUNT(*) FROM users")).rows[0][0]
+    res = await c.execute(
+        "SELECT telegram_id, username, first_name, is_banned FROM users "
+        "ORDER BY joined_at DESC, telegram_id DESC LIMIT ? OFFSET ?",
+        [limit, offset],
+    )
+    rows = [dict(zip(res.columns, r)) for r in res.rows]
+    return rows, total
 
 
 # ════════════════════════════════════════════════════════════

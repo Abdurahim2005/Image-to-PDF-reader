@@ -103,11 +103,16 @@ async def _check_tg_membership(client: Client, uid: int, channel_id: str) -> boo
         return False
 
 
-async def check_force_sub(client: Client, uid: int, chat_id: int) -> bool:
+async def check_force_sub(client: Client, uid: int, chat_id: int, send_message: bool = True) -> bool:
     """True -- bloklangan (xabar yuborilgan, davom etmang). False --
     bot ishlataveradi. Tashqi havolalar hech qachon bloklamaydi, lekin
     bloklovchi kanal bor paytda ular ham ro'yxatda oxirida chiqadi;
-    bloklovchi kanal yo'q bo'lsa, faqat BIRINCHI marta chiqadi."""
+    bloklovchi kanal yo'q bo'lsa, faqat BIRINCHI marta chiqadi.
+
+    `send_message=False` bo'lsa -- xabar YUBORILMAYDI, faqat natija
+    (bloklangan/bloklanmagan) qaytariladi. Bu "✅ Tekshirish" tugmasi
+    bosilganda kerak -- chatda ALLAQACHON turgan "obuna bo'ling"
+    xabari yetarli, yana bittasini qo'shib yubormaymiz."""
     channels = await database.list_active_required_channels()
     if not channels:
         return False
@@ -123,7 +128,11 @@ async def check_force_sub(client: Client, uid: int, chat_id: int) -> bool:
             if not await database.has_joined_channel(ch["id"], uid):
                 ext_first_time = True
             continue
-        if await _check_tg_membership(client, uid, channel_id):
+        # `channel_id` "<chat_id>|<invite_link>" formatida bo'lishi
+        # mumkin (private kanal uchun) -- tekshirish uchun faqat
+        # haqiqiy chat_id (ref) qismi kerak.
+        ref, _ = keyboards.channel_ref_and_url(channel_id)
+        if await _check_tg_membership(client, uid, ref):
             await database.record_channel_join(ch["id"], uid)
         else:
             tg_not_joined.append(ch)
@@ -141,7 +150,7 @@ async def check_force_sub(client: Client, uid: int, chat_id: int) -> bool:
         for ch in ext_channels:
             await database.record_channel_join(ch["id"], uid)
 
-    if blocking or ext_first_time:
+    if (blocking or ext_first_time) and send_message:
         lang = await _lang(uid)
         try:
             await client.send_message(
@@ -183,11 +192,17 @@ async def _cancel_collecting(uid: int, delete_status: bool = False, client: Clie
             pass
 
 
+async def _collecting_status_text(lang: str, uid: int, count: int) -> str:
+    max_images = await database.get_max_images_per_pdf(uid)
+    max_suffix = t(lang, "collecting_status_max_suffix", max=max_images) if max_images > 0 else ""
+    return t(lang, "collecting_status", count=count, max_suffix=max_suffix)
+
+
 async def _update_status(client: Client, uid: int, lang: str):
     state = collect_state.get(uid)
     if not state:
         return
-    text = t(lang, "collecting_status", count=len(state["images"]))
+    text = await _collecting_status_text(lang, uid, len(state["images"]))
     try:
         await client.edit_message_text(
             state["status_chat_id"], state["status_msg_id"], text,
@@ -251,6 +266,18 @@ async def _handle_photo(client: Client, message: Message):
             asyncio.create_task(_auto_delete_later(client, warn.chat.id, warn.id, 6))
             return
 
+        max_images = await database.get_max_images_per_pdf(uid)
+        if state and max_images > 0 and len(state["images"]) >= max_images:
+            # 1 PDF uchun max rasm soniga yetilgan -- rasmni qabul
+            # qilmaymiz, "Tayyor" bosishni so'raymiz.
+            try:
+                await message.delete()
+            except Exception:
+                pass
+            warn = await client.send_message(message.chat.id, t(lang, "max_images_reached", max=max_images))
+            asyncio.create_task(_auto_delete_later(client, warn.chat.id, warn.id, 6))
+            return
+
         temp_dir = _user_temp_dir(uid)
         local_path = os.path.join(temp_dir, f"img_{int(time.time() * 1000)}_{len(state['images']) if state else 0}.jpg")
         await message.download(file_name=local_path)
@@ -267,7 +294,7 @@ async def _handle_photo(client: Client, message: Message):
         state = collect_state.get(uid)
         if not state:
             status_msg = await client.send_message(
-                message.chat.id, t(lang, "collecting_status", count=1),
+                message.chat.id, await _collecting_status_text(lang, uid, 1),
                 reply_markup=keyboards.collecting_kb(lang),
             )
             collect_state[uid] = {
@@ -432,7 +459,36 @@ async def _finish_build(client: Client, uid: int, filename: str | None):
         caption=t(lang, "pdf_ready_caption", filename=f"{filename}.pdf", bot_username=bot_username),
     )
 
+    await _send_limit_status_and_maybe_ad(client, state["status_chat_id"], uid, lang, kind="create")
     await _cleanup_build(uid, state, final_path)
+
+
+async def _send_limit_status_and_maybe_ad(client: Client, chat_id: int, uid: int, lang: str, kind: str):
+    """PDF yasalgan/o'qilgandan KEYIN chaqiriladi -- kichik xabarda
+    bugungi limitdan qanchasi ishlatilgani va qanchasi qolganini
+    ko'rsatadi. Limit TUGAGAN bo'lsa (qolgan=0, limit cheklovsiz
+    emas) -- o'rniga premium reklamasi (hozircha test) chiqadi."""
+    if kind == "create":
+        _, used, limit = await database.can_create_pdf(uid)
+        status_key, zero_left_show_ad = "limit_status_after_create", True
+    else:
+        _, used, limit = await database.can_read_pdf(uid)
+        status_key, zero_left_show_ad = "limit_status_after_read", True
+
+    if limit <= 0:
+        return  # cheklovsiz -- hech narsa ko'rsatmaymiz
+
+    left = max(0, limit - used)
+    if left == 0 and zero_left_show_ad:
+        try:
+            await client.send_message(chat_id, t(lang, "premium_ad"), reply_markup=keyboards.premium_ad_kb(lang))
+        except Exception:
+            pass
+    else:
+        try:
+            await client.send_message(chat_id, t(lang, status_key, used=used, limit=limit, left=left))
+        except Exception:
+            pass
 
 
 _bot_username_cached = ""
@@ -551,6 +607,7 @@ async def _process_incoming_pdf(client: Client, message: Message, uid: int, lang
     except Exception:
         pass
 
+    await _send_limit_status_and_maybe_ad(client, message.chat.id, uid, lang, kind="read")
     await database.remove_pending_files_for_user(uid)
     _safe_remove_file(pdf_path)
     shutil.rmtree(pages_dir, ignore_errors=True)
@@ -660,12 +717,22 @@ def _register_user_handlers(client: Client) -> None:
     async def lang_cb(c, call: CallbackQuery):
         lang = call.data.split(":")[1]
         uid = call.from_user.id
+        existing_user = await database.get_user(uid)
+        already_had_lang = bool(existing_user and existing_user.get("language"))
         await database.set_user_language(uid, lang)
         await call.answer()
         try:
             await call.message.delete()
         except Exception:
             pass
+        if already_had_lang:
+            # "Til" tugmasi orqali o'zgartirilgan -- xush kelibsiz
+            # xabarini qaytadan ko'rsatmaymiz, shunchaki tasdiqlaymiz.
+            await c.send_message(
+                call.message.chat.id, t(lang, "language_set"),
+                reply_markup=keyboards.main_menu_kb(lang, is_admin(uid)),
+            )
+            return
         if await check_force_sub(c, uid, call.message.chat.id):
             return
         await c.send_message(
@@ -673,11 +740,23 @@ def _register_user_handlers(client: Client) -> None:
             reply_markup=keyboards.main_menu_kb(lang, is_admin(uid)),
         )
 
+    @client.on_callback_query(filters.regex(r"^force_sub:noop$"))
+    async def force_sub_noop_cb(c, call: CallbackQuery):
+        await call.answer()
+
+    @client.on_callback_query(filters.regex(r"^premium:info$"))
+    async def premium_info_cb(c, call: CallbackQuery):
+        # Premium hali ishlab chiqilmagan -- test (qisqa) popup xabari.
+        lang = await _lang(call.from_user.id)
+        await call.answer(t(lang, "premium_info_popup"), show_alert=True)
+
     @client.on_callback_query(filters.regex(r"^force_sub:check$"))
     async def force_sub_check_cb(c, call: CallbackQuery):
         uid = call.from_user.id
         lang = await _lang(uid)
-        still_blocked = await check_force_sub(c, uid, call.message.chat.id)
+        # send_message=False -- chatda ALLAQACHON turgan "obuna
+        # bo'ling" xabari yetarli, yana bittasini yubormaymiz.
+        still_blocked = await check_force_sub(c, uid, call.message.chat.id, send_message=False)
         if still_blocked:
             await call.answer(t(lang, "force_sub_still_not"), show_alert=True)
             return
@@ -702,6 +781,54 @@ def _register_user_handlers(client: Client) -> None:
     async def menu_info(c, m):
         lang = await _lang(m.from_user.id)
         await m.reply(t(lang, "info_text", admin_username=_admin_username()))
+
+    @client.on_message(filters.private & filters.text & filters.create(
+        lambda _, __, m: m.text in (t("uz", "menu_btn_stats"), t("en", "menu_btn_stats"))
+    ))
+    async def menu_stats(c, m):
+        uid = m.from_user.id
+        lang = await _lang(uid)
+        user = await database.get_user(uid)
+        if not user:
+            return
+        await m.reply(t(
+            lang, "user_stats_text",
+            images_sent=user.get("images_sent") or 0,
+            pdfs_created=user.get("pdfs_created") or 0, pdfs_created_today=user.get("pdfs_created_today") or 0,
+            pdfs_read=user.get("pdfs_read") or 0, pdfs_read_today=user.get("pdfs_read_today") or 0,
+        ))
+
+    @client.on_message(filters.private & filters.text & filters.create(
+        lambda _, __, m: m.text in (t("uz", "menu_btn_profile"), t("en", "menu_btn_profile"))
+    ))
+    async def menu_profile(c, m):
+        uid = m.from_user.id
+        lang = await _lang(uid)
+        user = await database.get_user(uid)
+        if not user:
+            return
+        _, used_create, limit_create = await database.can_create_pdf(uid)
+        _, used_read, limit_read = await database.can_read_pdf(uid)
+        max_images = await database.get_max_images_per_pdf(uid)
+        limit_create_s = str(limit_create) if limit_create > 0 else t(lang, "profile_unlimited")
+        limit_read_s = str(limit_read) if limit_read > 0 else t(lang, "profile_unlimited")
+        max_images_s = str(max_images) if max_images > 0 else t(lang, "profile_unlimited")
+        # Premium hali ishlab chiqilmagan -- hozircha hamma "Oddiy" daraja.
+        tier = t(lang, "profile_tier_standard")
+        await m.reply(t(
+            lang, "profile_text",
+            id=uid, name=m.from_user.first_name or "", tier=tier,
+            used_create=used_create, limit_create=limit_create_s,
+            used_read=used_read, limit_read=limit_read_s,
+            max_images=max_images_s,
+        ))
+
+    @client.on_message(filters.private & filters.text & filters.create(
+        lambda _, __, m: m.text in (t("uz", "menu_btn_language"), t("en", "menu_btn_language"))
+    ))
+    async def menu_language(c, m):
+        lang = await _lang(m.from_user.id)
+        await m.reply(t(lang, "choose_language"), reply_markup=keyboards.language_kb())
 
     @client.on_message(filters.private & filters.text & filters.create(
         lambda _, __, m: m.text in (t("uz", "menu_btn_contact_admin"), t("en", "menu_btn_contact_admin"))
@@ -739,10 +866,22 @@ def _register_user_handlers(client: Client) -> None:
 
     @client.on_message(filters.private & filters.photo)
     async def photo_msg(c, m):
+        uid = m.from_user.id
+        # Admin broadcast/foydalanuvchiga xabar yozish jarayonida bo'lsa
+        # -- bu rasm PDF yig'ish uchun EMAS, balki admin oqimiga tegishli.
+        if is_admin(uid) and uid in admin_flow:
+            from admin_panel import handle_admin_media
+            if await handle_admin_media(c, m):
+                return
         await _handle_photo(c, m)
 
     @client.on_message(filters.private & filters.document)
     async def document_msg(c, m):
+        uid = m.from_user.id
+        if is_admin(uid) and uid in admin_flow:
+            from admin_panel import handle_admin_media
+            if await handle_admin_media(c, m):
+                return
         doc = m.document
         is_pdf = doc and (doc.mime_type == "application/pdf" or (doc.file_name or "").lower().endswith(".pdf"))
         if is_pdf:
@@ -752,6 +891,11 @@ def _register_user_handlers(client: Client) -> None:
 
     @client.on_message(filters.private & (filters.video | filters.animation) & ~filters.document)
     async def media_msg(c, m):
+        uid = m.from_user.id
+        if is_admin(uid) and uid in admin_flow:
+            from admin_panel import handle_admin_media
+            if await handle_admin_media(c, m):
+                return
         await _media_router(c, m)
 
     @client.on_message(filters.private & filters.text & ~filters.command("start"))
