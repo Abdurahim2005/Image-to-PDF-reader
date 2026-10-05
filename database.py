@@ -36,9 +36,16 @@ def _http_url(url: str) -> str:
 
 
 def get_client() -> libsql_client.Client:
+    """DIQQAT: `create_client()` (sync emas!) -- bu HAQIQIY asinxron
+    klient qaytaradi, uning `execute()` metodi coroutine bo'lib,
+    `await` bilan chaqirilishi kerak. Butun bot asinxron (pyrogram)
+    bo'lgani uchun aynan shu klient kerak -- `create_client_sync()`
+    esa SYNC klient qaytaradi va uning natijasini `await` qilishga
+    urinish `TypeError: object ResultSet can't be used in 'await'
+    expression` xatosini beradi."""
     global _client
     if _client is None:
-        _client = libsql_client.create_client_sync(
+        _client = libsql_client.create_client(
             url=_http_url(config.TURSO_DATABASE_URL),
             auth_token=config.TURSO_AUTH_TOKEN,
         )
