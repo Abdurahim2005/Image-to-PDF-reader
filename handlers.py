@@ -35,6 +35,23 @@ contact_state: set[int] = set()        # adminga xabar yozish jarayonidagilar
 admin_reply_target: dict[int, int] = {}  # admin_id -> javob yozilayotgan foydalanuvchi id
 admin_flow: dict[int, dict] = {}       # admin_id -> {"action": ..., ...}
 
+# Har foydalanuvchi uchun lock -- ALBUM (media group) sifatida bir
+# nechta rasm bir vaqtda (bir-biridan bir necha millisekund farq
+# bilan) kelganda, ularni QATOR bilan (ketma-ket) qabul qilish uchun.
+# Lock'siz bo'lsa: ikkinchi rasm, birinchisi hali `collect_state[uid]`
+# ni yaratib ulgurmasdan kelib qolishi mumkin -- natijada ikkalasi
+# "men birinchi rasmman" deb o'ylab, bir-birining holatini ezib
+# tashlaydi (faqat 1 ta rasm qolib ketishi aynan shundan).
+_photo_locks: dict[int, asyncio.Lock] = {}
+
+
+def _get_photo_lock(uid: int) -> asyncio.Lock:
+    lock = _photo_locks.get(uid)
+    if lock is None:
+        lock = asyncio.Lock()
+        _photo_locks[uid] = lock
+    return lock
+
 
 def is_admin(uid: int) -> bool:
     return uid in config.ADMIN_IDS
@@ -130,8 +147,15 @@ async def _cancel_collecting(uid: int, delete_status: bool = False, client: Clie
     state = collect_state.pop(uid, None)
     if not state:
         return
+    build_task = state.get("build_task")
+    if build_task and not build_task.done():
+        build_task.cancel()
+    tmp_output_path = state.get("tmp_output_path")
     paths = await database.remove_pending_files_for_user(uid)
-    for p in set(paths + state.get("images", [])):
+    all_paths = set(paths + state.get("images", []))
+    if tmp_output_path:
+        all_paths.add(tmp_output_path)
+    for p in all_paths:
         try:
             if os.path.exists(p):
                 os.remove(p)
@@ -162,16 +186,20 @@ async def _idle_watchdog(client: Client, uid: int, token: int, timeout: float):
     """`timeout` soniya kutadi; agar shu orada holat hali ham mavjud
     bo'lsa VA token hali eng oxirgisi bo'lsa (ya'ni foydalanuvchi shu
     orada yangi rasm yubormagan/tugma bosmagan bo'lsa) -- avtomatik
-    keyingi bosqichga o'tkazadi."""
+    PDF qurishni boshlab yuboradi. Foydalanuvchi "Tayyor" bosmasdan
+    jim qolgan bo'lsa (ehtimol chatdan chiqib ketgan) -- ENDI nom
+    so'rab yana 30 soniya KUTILMAYDI, standart nom bilan to'g'ridan
+    to'g'ri PDF qurilib yuboriladi (xotirani bekorga ushlab turmaslik
+    uchun)."""
     await asyncio.sleep(timeout)
     state = collect_state.get(uid)
     if not state or state.get("token") != token:
         return  # eskirgan watchdog -- holat allaqachon o'zgargan
 
     if state["stage"] == "collecting":
-        await _finalize_to_filename_prompt(client, uid)
+        await _start_build_and_ask_filename(client, uid, auto_timeout=True)
     elif state["stage"] == "awaiting_filename":
-        await _build_pdf(client, uid, filename=None)
+        await _finish_build(client, uid, filename=None)
 
 
 def _bump_token(uid: int) -> int:
@@ -190,60 +218,103 @@ async def _handle_photo(client: Client, message: Message):
     if await check_force_sub(client, uid, message.chat.id):
         return
 
-    state = collect_state.get(uid)
-    if state and state["stage"] == "awaiting_filename":
-        # Nom kutilayotganda rasm yuborilsa -- e'tiborsiz qoldiramiz
-        # ("bir ish payti boshqasi bajarilmaydi").
-        return
+    # Albumdagi rasmlar bir-biridan millisekundlar farqi bilan kelishi
+    # mumkin -- shuning uchun shu foydalanuvchi uchun qabul qilishni
+    # KETMA-KET (bitta vaqtda faqat bitta rasm) qilamiz.
+    async with _get_photo_lock(uid):
+        state = collect_state.get(uid)
+        if state and state["stage"] in ("awaiting_filename", "building"):
+            # PDF qurilayotganda yoki nom kutilayotganda rasm yuborilsa
+            # -- e'tiborsiz qoldiramiz ("bir ish payti boshqasi
+            # bajarilmaydi").
+            return
 
-    temp_dir = _user_temp_dir(uid)
-    local_path = os.path.join(temp_dir, f"img_{int(time.time() * 1000)}.jpg")
-    await message.download(file_name=local_path)
-    size = pdf_utils.get_file_size(local_path)
-    await database.record_image_sent(uid, size)
-    await database.add_pending_file(uid, local_path, size)
+        temp_dir = _user_temp_dir(uid)
+        local_path = os.path.join(temp_dir, f"img_{int(time.time() * 1000)}_{len(state['images']) if state else 0}.jpg")
+        await message.download(file_name=local_path)
+        size = pdf_utils.get_file_size(local_path)
+        await database.record_image_sent(uid, size)
+        await database.add_pending_file(uid, local_path, size)
 
-    # Rasm chatdan DOIM tozalanadi (qabul bo'lgach)
-    try:
-        await message.delete()
-    except Exception:
-        pass
+        # Rasm chatdan DOIM tozalanadi (qabul bo'lgach)
+        try:
+            await message.delete()
+        except Exception:
+            pass
 
-    if not state:
-        status_msg = await client.send_message(
-            message.chat.id, t(lang, "collecting_status", count=1),
-            reply_markup=keyboards.collecting_kb(lang),
-        )
-        collect_state[uid] = {
-            "images": [local_path],
-            "status_chat_id": message.chat.id,
-            "status_msg_id": status_msg.id,
-            "stage": "collecting",
-            "token": 0,
-        }
-    else:
-        state["images"].append(local_path)
-        await _update_status(client, uid, lang)
+        state = collect_state.get(uid)
+        if not state:
+            status_msg = await client.send_message(
+                message.chat.id, t(lang, "collecting_status", count=1),
+                reply_markup=keyboards.collecting_kb(lang),
+            )
+            collect_state[uid] = {
+                "images": [local_path],
+                "status_chat_id": message.chat.id,
+                "status_msg_id": status_msg.id,
+                "stage": "collecting",
+                "token": 0,
+            }
+        else:
+            state["images"].append(local_path)
+            await _update_status(client, uid, lang)
 
-    token = _bump_token(uid)
+        token = _bump_token(uid)
+
     asyncio.create_task(_idle_watchdog(client, uid, token, config.COLLECT_IDLE_TIMEOUT))
 
 
 async def _collect_done_cb(client: Client, call: CallbackQuery):
     uid = call.from_user.id
-    lang = await _lang(uid)
     state = collect_state.get(uid)
     await call.answer()
     if not state or state["stage"] != "collecting" or not state["images"]:
         return
-    await _finalize_to_filename_prompt(client, uid)
+    await _start_build_and_ask_filename(client, uid, auto_timeout=False)
 
 
-async def _finalize_to_filename_prompt(client: Client, uid: int):
+async def _start_build_and_ask_filename(client: Client, uid: int, auto_timeout: bool):
+    """"Tayyor" bosilgach (yoki rasm yuborish 30 soniya to'xtab qolgach)
+    chaqiriladi. G'OYA: PDF qurishni DARHOL fonda boshlaymiz (vaqtinchalik
+    nom bilan) -- foydalanuvchi nom yozib ulgurguncha, PDF allaqachon
+    tayyor bo'lib turadi, shuning uchun nom kiritilgach DARHOL (qurish
+    kutilmasdan) yuboriladi -- juda tez tuyuladi.
+
+    `auto_timeout=True` bo'lsa (foydalanuvchi "Tayyor" bosmay, 30 soniya
+    rasm yubormay jim qolgan) -- ENDI nom so'ramaymiz, standart nom bilan
+    to'g'ridan to'g'ri yakunlaymiz (ortiqcha 30 soniya xotirani band
+    qilib turmaslik uchun)."""
     state = collect_state.get(uid)
     if not state:
         return
     lang = await _lang(uid)
+
+    # Stage'ni DARHOL "building"ga o'tkazamiz -- shu lahzadan boshlab
+    # `_handle_photo` yangi kelgan rasmlarni "jarayon band" deb bilib,
+    # qabul qilmaydi (aks holda ular qurilish uchun olingan ro'yxatga
+    # kirmay, orphan fayl bo'lib qolib ketishi mumkin edi).
+    state["stage"] = "building"
+
+    try:
+        await client.edit_message_text(state["status_chat_id"], state["status_msg_id"], t(lang, "pdf_building"))
+    except Exception:
+        pass
+
+    # PDF qurishni FONDA, HOZIROQ boshlaymiz -- vaqtinchalik (noyob)
+    # nom bilan. Natija tugagach, `state["build_result"]` ga yoziladi.
+    temp_dir = _user_temp_dir(uid)
+    tmp_output_path = os.path.join(temp_dir, f"tmp_{uid}_{int(time.time() * 1000)}.pdf")
+    state["build_task"] = asyncio.create_task(
+        _run_pdf_build(list(state["images"]), tmp_output_path)
+    )
+    state["tmp_output_path"] = tmp_output_path
+
+    if auto_timeout:
+        # Foydalanuvchi allaqachon jim -- nom so'rab yana kutmaymiz,
+        # darhol standart nom bilan yakunlaymiz.
+        await _finish_build(client, uid, filename=None)
+        return
+
     state["stage"] = "awaiting_filename"
     try:
         await client.edit_message_text(
@@ -253,6 +324,16 @@ async def _finalize_to_filename_prompt(client: Client, uid: int):
         pass
     token = _bump_token(uid)
     asyncio.create_task(_idle_watchdog(client, uid, token, config.FILENAME_WAIT_TIMEOUT))
+
+
+async def _run_pdf_build(images: list[str], output_path: str) -> Exception | None:
+    """Fon vazifasi -- rasmlarni PDF'ga aylantiradi. Xato bo'lsa, uni
+    qaytaradi (chaqiruvchi tomonda tekshiriladi), aks holda None."""
+    try:
+        await asyncio.to_thread(pdf_utils.images_to_pdf, images, output_path)
+        return None
+    except Exception as e:
+        return e
 
 
 async def _collect_cancel_cb(client: Client, call: CallbackQuery):
@@ -270,19 +351,37 @@ async def _handle_filename_text(client: Client, message: Message, state: dict):
         await message.delete()
     except Exception:
         pass
-    await _build_pdf(client, uid, filename=filename or None)
+    await _finish_build(client, uid, filename=filename or None)
 
 
-async def _build_pdf(client: Client, uid: int, filename: str | None):
+async def _finish_build(client: Client, uid: int, filename: str | None):
+    """Nom kelgach (yoki nom kutish vaqti tugagach) chaqiriladi. PDF
+    qurish fon vazifasi HALI TUGAMAGAN bo'lsa -- shu yerda tugashini
+    kutamiz (odatda foydalanuvchi yozib ulgurgan vaqtda allaqachon
+    tayyor bo'ladi, shuning uchun amalda kutish deyarli bo'lmaydi);
+    tugagan bo'lsa -- faylni darhol kerakli nomga o'tkazib yuboramiz."""
     state = collect_state.pop(uid, None)
     if not state:
         return
     lang = await _lang(uid)
 
-    try:
-        await client.edit_message_text(state["status_chat_id"], state["status_msg_id"], t(lang, "pdf_building"))
-    except Exception:
-        pass
+    build_task = state.get("build_task")
+    tmp_output_path = state.get("tmp_output_path")
+    if build_task is None or tmp_output_path is None:
+        # Ehtiyot chorasi -- odatda bo'lmaydi, lekin build boshlanmagan
+        # bo'lsa ham PDF qurib yuboramiz.
+        tmp_output_path = os.path.join(_user_temp_dir(uid), f"tmp_{uid}_{int(time.time() * 1000)}.pdf")
+        build_error = await _run_pdf_build(state["images"], tmp_output_path)
+    else:
+        build_error = await build_task
+
+    if build_error is not None:
+        try:
+            await client.send_message(state["status_chat_id"], t(lang, "pdf_read_error"))
+        except Exception:
+            pass
+        await _cleanup_build(uid, state, tmp_output_path)
+        return
 
     if not filename:
         user = await database.get_user(uid)
@@ -290,15 +389,14 @@ async def _build_pdf(client: Client, uid: int, filename: str | None):
     filename = "".join(c for c in filename if c not in '\\/:*?"<>|').strip() or "document"
 
     temp_dir = _user_temp_dir(uid)
-    output_path = os.path.join(temp_dir, f"{filename}.pdf")
+    final_path = os.path.join(temp_dir, f"{filename}.pdf")
     try:
-        await asyncio.to_thread(pdf_utils.images_to_pdf, state["images"], output_path)
+        if tmp_output_path != final_path:
+            os.replace(tmp_output_path, final_path)
     except Exception:
-        await client.send_message(state["status_chat_id"], t(lang, "pdf_read_error"))
-        await _cleanup_build(uid, state, output_path)
-        return
+        final_path = tmp_output_path  # nom almashtirib bo'lmasa, baribir yuboramiz
 
-    size = pdf_utils.get_file_size(output_path)
+    size = pdf_utils.get_file_size(final_path)
     await database.record_pdf_created(uid, size)
 
     try:
@@ -308,11 +406,11 @@ async def _build_pdf(client: Client, uid: int, filename: str | None):
 
     bot_username = config.BOT_USERNAME or _bot_username_cached
     await client.send_document(
-        state["status_chat_id"], output_path,
+        state["status_chat_id"], final_path,
         caption=t(lang, "pdf_ready_caption", filename=f"{filename}.pdf", bot_username=bot_username),
     )
 
-    await _cleanup_build(uid, state, output_path)
+    await _cleanup_build(uid, state, final_path)
 
 
 _bot_username_cached = ""

@@ -14,12 +14,63 @@
 #   settings         -- global sozlamalar (limitlar)
 #   admin_messages   -- foydalanuvchi <-> admin xat almashinuvi bog'lash
 # ════════════════════════════════════════════════════════════
+import asyncio
+import logging
 import time
+
 import libsql_client
 
 import config
 
-_client: libsql_client.Client | None = None
+logger = logging.getLogger(__name__)
+
+_client: "_RetryingClient | None" = None
+
+# Vaqtinchalik tarmoq xatolari -- Turso bilan HTTP ulanish ora-sirada
+# uzilib qolishi (bu internetning odatiy holati, Turso tomonidagi xato
+# emas) -- shunday paytda so'rovni darhol xato deb qaytarish o'rniga,
+# bir necha marta qayta urinamiz.
+_RETRYABLE_EXCEPTIONS = (
+    ConnectionError,
+    TimeoutError,
+    OSError,
+)
+
+
+class _RetryingClient:
+    """`libsql_client.Client`ni o'rab oladi -- `execute()` chaqirilganda,
+    vaqtinchalik tarmoq xatosi (masalan `ServerDisconnectedError`,
+    ulanish uzilishi) yuzaga kelsa, darhol xato ko'tarish o'rniga bir
+    necha marta (qisqa kutish bilan) qayta urinadi. Boshqa barcha
+    metodlar (bo'lsa) to'g'ridan-to'g'ri asl klientga yo'naltiriladi."""
+
+    def __init__(self, raw: libsql_client.Client):
+        self._raw = raw
+
+    async def execute(self, *args, **kwargs):
+        last_exc = None
+        for attempt in range(3):
+            try:
+                return await self._raw.execute(*args, **kwargs)
+            except _RETRYABLE_EXCEPTIONS as e:
+                last_exc = e
+                logger.warning("Turso so'rovi muvaqqat xato berdi (urinish %d/3): %s", attempt + 1, e)
+                await asyncio.sleep(0.5 * (attempt + 1))
+            except Exception as e:
+                # aiohttp'ning ServerDisconnectedError kabi ba'zi
+                # xatolari to'g'ridan-to'g'ri yuqoridagi tuplarga
+                # kirmasligi mumkin -- shuning uchun xato nomi bo'yicha
+                # ham tekshiramiz (zaxira usul).
+                if "Disconnected" in type(e).__name__ or "disconnected" in str(e).lower():
+                    last_exc = e
+                    logger.warning("Turso ulanishi uzildi (urinish %d/3): %s", attempt + 1, e)
+                    await asyncio.sleep(0.5 * (attempt + 1))
+                    continue
+                raise
+        raise last_exc
+
+    def __getattr__(self, name):
+        return getattr(self._raw, name)
 
 
 def _http_url(url: str) -> str:
@@ -35,20 +86,24 @@ def _http_url(url: str) -> str:
     return url
 
 
-def get_client() -> libsql_client.Client:
+def get_client() -> "_RetryingClient":
     """DIQQAT: `create_client()` (sync emas!) -- bu HAQIQIY asinxron
     klient qaytaradi, uning `execute()` metodi coroutine bo'lib,
     `await` bilan chaqirilishi kerak. Butun bot asinxron (pyrogram)
     bo'lgani uchun aynan shu klient kerak -- `create_client_sync()`
     esa SYNC klient qaytaradi va uning natijasini `await` qilishga
     urinish `TypeError: object ResultSet can't be used in 'await'
-    expression` xatosini beradi."""
+    expression` xatosini beradi.
+
+    Qaytariladigan klient `_RetryingClient` bilan o'ralgan -- vaqtinchalik
+    tarmoq uzilishlarida avtomatik qayta urinadi."""
     global _client
     if _client is None:
-        _client = libsql_client.create_client(
+        raw = libsql_client.create_client(
             url=_http_url(config.TURSO_DATABASE_URL),
             auth_token=config.TURSO_AUTH_TOKEN,
         )
+        _client = _RetryingClient(raw)
     return _client
 
 
