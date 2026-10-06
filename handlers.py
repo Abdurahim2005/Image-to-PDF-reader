@@ -105,52 +105,39 @@ async def _check_tg_membership(client: Client, uid: int, channel_id: str) -> boo
 
 async def check_force_sub(client: Client, uid: int, chat_id: int, send_message: bool = True) -> bool:
     """True -- bloklangan (xabar yuborilgan, davom etmang). False --
-    bot ishlataveradi. Tashqi havolalar hech qachon bloklamaydi, lekin
-    bloklovchi kanal bor paytda ular ham ro'yxatda oxirida chiqadi;
-    bloklovchi kanal yo'q bo'lsa, faqat BIRINCHI marta chiqadi.
+    bot ishlataveradi.
+
+    MANTIQ: tashqi havolalar (Instagram va h.k.) HECH QACHON a'zolikni
+    tekshirilmaydi va ALOHIDA/bir martalik ko'rsatilmaydi -- ular
+    FAQAT foydalanuvchi hali MAJBURIY (Telegram) kanal(lar)ga obuna
+    bo'lmagan paytda, shu kanallar ro'yxati bilan BIRGA (oxirida)
+    ko'rsatiladi. Agar foydalanuvchi barcha majburiy kanallarga
+    obuna bo'lgan bo'lsa -- tashqi havolalar UMUMAN ko'rsatilmaydi,
+    chunki ular bloklovchi emas va o'z holicha hech qachon alohida
+    talab qilinmaydi.
 
     `send_message=False` bo'lsa -- xabar YUBORILMAYDI, faqat natija
-    (bloklangan/bloklanmagan) qaytariladi. Bu "✅ Tekshirish" tugmasi
-    bosilganda kerak -- chatda ALLAQACHON turgan "obuna bo'ling"
-    xabari yetarli, yana bittasini qo'shib yubormaymiz."""
+    qaytariladi (masalan "✅ Tekshirish" tugmasi bosilganda kerak)."""
     channels = await database.list_active_required_channels()
     if not channels:
         return False
 
-    tg_not_joined, ext_channels = [], []
-    blocking = False
-    ext_first_time = False
+    tg_channels = [ch for ch in channels if not str(ch["channel_id"]).startswith("ext:")]
+    ext_channels = [ch for ch in channels if str(ch["channel_id"]).startswith("ext:")]
 
-    for ch in channels:
-        channel_id = str(ch["channel_id"])
-        if channel_id.startswith("ext:"):
-            ext_channels.append(ch)
-            if not await database.has_joined_channel(ch["id"], uid):
-                ext_first_time = True
-            continue
-        # `channel_id` "<chat_id>|<invite_link>" formatida bo'lishi
-        # mumkin (private kanal uchun) -- tekshirish uchun faqat
-        # haqiqiy chat_id (ref) qismi kerak.
-        ref, _ = keyboards.channel_ref_and_url(channel_id)
+    tg_not_joined = []
+    for ch in tg_channels:
+        ref, _ = keyboards.channel_ref_and_url(str(ch["channel_id"]))
         if await _check_tg_membership(client, uid, ref):
             await database.record_channel_join(ch["id"], uid)
         else:
             tg_not_joined.append(ch)
-            blocking = True
 
-    not_joined = list(tg_not_joined)
-    if blocking:
-        not_joined.extend(ext_channels)
-    elif ext_first_time:
-        not_joined.extend(
-            ch for ch in ext_channels if not await database.has_joined_channel(ch["id"], uid)
-        )
+    if not tg_not_joined:
+        return False  # barcha majburiy kanallarga obuna -- tashqi havolalar ko'rsatilmaydi
 
-    if not_joined and (blocking or ext_first_time):
-        for ch in ext_channels:
-            await database.record_channel_join(ch["id"], uid)
-
-    if (blocking or ext_first_time) and send_message:
+    not_joined = tg_not_joined + ext_channels
+    if send_message:
         lang = await _lang(uid)
         try:
             await client.send_message(
@@ -159,9 +146,7 @@ async def check_force_sub(client: Client, uid: int, chat_id: int, send_message: 
             )
         except Exception:
             pass
-        return blocking
-
-    return False
+    return True
 
 
 # ════════════════════════════════════════════════════════════
@@ -808,6 +793,20 @@ def _register_user_handlers(client: Client) -> None:
             images_sent=user.get("images_sent") or 0,
             pdfs_created=user.get("pdfs_created") or 0,
             pdfs_read=user.get("pdfs_read") or 0,
+        ))
+
+    @client.on_message(filters.private & filters.text & filters.create(
+        lambda _, __, m: m.text in (t("uz", "menu_btn_stats"), t("en", "menu_btn_stats"))
+    ))
+    async def menu_stats(c, m):
+        # Umumiy bot statistikasi -- FAQAT jami ko'rsatkichlar, bugungi
+        # ma'lumotlar bu yerda ko'rsatilmaydi (ular faqat admin panelda).
+        lang = await _lang(m.from_user.id)
+        s = await database.get_overview_stats()
+        await m.reply(t(
+            lang, "public_stats_text",
+            total_users=s["total_users"], total_images=s["total_images"],
+            total_pdfs=s["total_pdfs"], total_read=s["total_read"],
         ))
 
     @client.on_message(filters.private & filters.text & filters.create(

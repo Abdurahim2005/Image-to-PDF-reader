@@ -14,8 +14,9 @@ def language_kb() -> InlineKeyboardMarkup:
 
 def main_menu_kb(lang: str, is_admin: bool = False) -> ReplyKeyboardMarkup:
     rows = [
-        [KeyboardButton(t(lang, "menu_btn_profile")), KeyboardButton(t(lang, "menu_btn_language"))],
-        [KeyboardButton(t(lang, "menu_btn_contact_admin")), KeyboardButton(t(lang, "menu_btn_info"))],
+        [KeyboardButton(t(lang, "menu_btn_profile")), KeyboardButton(t(lang, "menu_btn_stats"))],
+        [KeyboardButton(t(lang, "menu_btn_contact_admin")), KeyboardButton(t(lang, "menu_btn_language"))],
+        [KeyboardButton(t(lang, "menu_btn_info"))],
     ]
     if is_admin:
         rows.append([KeyboardButton(t(lang, "menu_btn_admin_panel"))])
@@ -68,19 +69,18 @@ def channel_ref_and_url(channel_id: str) -> tuple[str, str | None]:
 def force_sub_kb(channels: list[dict], lang: str) -> InlineKeyboardMarkup:
     """`channels` -- required_channels jadvalidan qatorlar ro'yxati.
     Haqiqiy Telegram kanallar avval, tashqi havolalar OXIRIDA chiqadi
-    (chaqiruvchi tomonda shu tartibda beriladi)."""
+    (chaqiruvchi tomonda shu tartibda beriladi). Tugma nomi HAR DOIM
+    "Kanal 1", "Kanal 2"... -- admin kiritgan haqiqiy nom hech qachon
+    foydalanuvchiga ko'rsatilmaydi."""
     rows = []
     for idx, ch in enumerate(channels, start=1):
         _, url = channel_ref_and_url(str(ch["channel_id"]))
-        label = ch.get("title") or t(lang, "force_sub_channel_btn", num=idx)
+        label = t(lang, "force_sub_channel_btn", num=idx)
         if url:
             rows.append([InlineKeyboardButton(f"📢 {label}", url=url)])
         else:
-            # Havola topilmagan (eski yozuv) -- hech bo'lmasa nomini
-            # ko'rsatuvchi bosilmaydigan tugma o'rniga, oddiy matn
-            # qatoridan foydalanish mumkin emas (InlineKeyboard faqat
-            # tugma qabul qiladi) -- shuning uchun callback_data bilan
-            # "ma'lumot" tugmasi qo'yamiz, bosilsa hech narsa qilmaydi.
+            # Havola topilmagan (masalan bot admin bo'lmagan private
+            # kanal) -- bosilganda hech narsa qilmaydigan tugma.
             rows.append([InlineKeyboardButton(f"📢 {label}", callback_data="force_sub:noop")])
     rows.append([InlineKeyboardButton(t(lang, "force_sub_check_btn"), callback_data="force_sub:check")])
     return InlineKeyboardMarkup(rows)
@@ -159,6 +159,7 @@ def admin_limits_kb(lang: str) -> InlineKeyboardMarkup:
 def admin_channels_kb(lang: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(t(lang, "admin_btn_add_channel"), callback_data="adm:chan_add")],
+        [InlineKeyboardButton(t(lang, "admin_btn_add_ext_link"), callback_data="adm:chan_add_ext")],
         [InlineKeyboardButton(t(lang, "admin_btn_remove_channel"), callback_data="adm:chan_remove")],
         [InlineKeyboardButton(t(lang, "admin_btn_back"), callback_data="adm:panel")],
     ])

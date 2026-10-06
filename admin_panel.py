@@ -71,9 +71,14 @@ async def handle_admin_text(client: Client, message: Message) -> bool:
         await _show_limits(client, message.chat.id, lang)
         return True
 
-    if action == "add_channel":
+    if action == "add_tg_channel":
         handlers.admin_flow.pop(uid, None)
-        await _do_add_channel(client, message, lang)
+        await _do_add_tg_channel(client, message, lang)
+        return True
+
+    if action == "add_ext_link":
+        handlers.admin_flow.pop(uid, None)
+        await _do_add_ext_link(client, message, lang)
         return True
 
     if action == "remove_channel":
@@ -293,15 +298,28 @@ async def _show_limits(client: Client, chat_id: int, lang: str, msg_id: int | No
 # ════════════════════════════════════════════════════════════
 async def _show_channels(client: Client, chat_id: int, lang: str, msg_id: int | None = None):
     channels = await database.list_active_required_channels()
-    if not channels:
-        list_text = t(lang, "admin_channels_empty")
-    else:
-        rows = []
-        for i, ch in enumerate(channels, 1):
+    tg_channels = [ch for ch in channels if not str(ch["channel_id"]).startswith("ext:")]
+    ext_channels = [ch for ch in channels if str(ch["channel_id"]).startswith("ext:")]
+
+    if tg_channels:
+        tg_rows = []
+        for i, ch in enumerate(tg_channels, 1):
             count = await database.count_channel_members(ch["id"])
-            rows.append(f"[{ch['id']}] " + t(lang, "admin_channel_row", num=i, title=ch["title"] or ch["channel_id"], count=count))
-        list_text = "\n".join(rows)
-    text = t(lang, "admin_channels_text", list=list_text)
+            tg_rows.append(f"[{ch['id']}] " + t(lang, "admin_channel_row", num=i, title=ch["title"] or ch["channel_id"], count=count))
+        tg_text = "\n".join(tg_rows)
+    else:
+        tg_text = t(lang, "admin_channels_empty")
+
+    if ext_channels:
+        ext_rows = []
+        for i, ch in enumerate(ext_channels, 1):
+            # Tashqi havolalar a'zolik soni HECH QACHON hisoblanmaydi.
+            ext_rows.append(f"[{ch['id']}] " + t(lang, "admin_ext_link_row", num=i, title=ch["title"] or ch["channel_id"]))
+        ext_text = "\n".join(ext_rows)
+    else:
+        ext_text = t(lang, "admin_channels_empty")
+
+    text = t(lang, "admin_channels_text", tg_list=tg_text, ext_list=ext_text)
     kb = keyboards.admin_channels_kb(lang)
     if msg_id:
         await client.edit_message_text(chat_id, msg_id, text, reply_markup=kb)
@@ -309,47 +327,21 @@ async def _show_channels(client: Client, chat_id: int, lang: str, msg_id: int | 
         await client.send_message(chat_id, text, reply_markup=kb)
 
 
-def _is_telegram_url(text: str) -> bool:
-    text = text.strip()
-    if text.startswith("@"):
-        return True
-    lowered = text.lower()
-    return any(d in lowered for d in ("t.me/", "telegram.me/", "telegram.dog/"))
-
-
-def _auto_title_from_url(url: str) -> str:
-    parsed = urllib.parse.urlparse(url if "://" in url else "https://" + url)
-    parts = [p for p in parsed.path.split("/") if p]
-    return f"{parsed.netloc}/{parts[0]}" if parts else parsed.netloc
-
-
-async def _do_add_channel(client: Client, message: Message, lang: str):
-    text = (message.text or "").strip()
-    if "|" in text:
-        title, url = [x.strip() for x in text.split("|", 1)]
-    elif not _is_telegram_url(text):
-        title, url = _auto_title_from_url(text), text
-    else:
-        title, url = None, text
-
-    if title is not None:
-        # Tashqi havola
-        await database.add_required_channel(f"ext:{url}", title)
-        await message.reply(t(lang, "admin_channel_added"))
-        await _show_channels(client, message.chat.id, lang)
-        return
-
-    # Haqiqiy Telegram kanal -- tekshiramiz
-    ref = url
+async def _do_add_tg_channel(client: Client, message: Message, lang: str):
+    """Admin ID (masalan -1001234567890) yoki @username yuboradi --
+    ikkisidan qaysi birini yuborgani avtomatik aniqlanadi (ikkisi ham
+    Pyrogram'ning `get_chat()` metodiga bevosita beriladi)."""
+    ref = (message.text or "").strip()
     if ref.startswith("https://t.me/") or ref.startswith("http://t.me/"):
         ref = "@" + ref.split("t.me/")[-1].lstrip("@")
+    elif not ref.startswith("@") and not ref.lstrip("-").isdigit():
+        ref = "@" + ref  # "kanal_nomi" kabi @siz yuborilgan bo'lsa ham ishlasin
+
     try:
         chat = await client.get_chat(ref)
         # Tugma uchun havola kerak: agar kanal PUBLIC bo'lsa (username
         # bor) -- t.me/username ishlatamiz; agar PRIVATE bo'lsa --
         # bot admin ekanligi sababli invite link yaratib olamiz.
-        # Havola topilmasa ham kanalni saqlaymiz (tugma faqat nom
-        # bilan ko'rinadi, lekin baribir tekshiriladi).
         if chat.username:
             invite_link = f"https://t.me/{chat.username}"
         else:
@@ -357,16 +349,31 @@ async def _do_add_channel(client: Client, message: Message, lang: str):
                 invite_link = await client.export_chat_invite_link(chat.id)
             except Exception:
                 invite_link = ""
-        # `channel_id` ustuniga TEKSHIRISH uchun haqiqiy chat.id, lekin
-        # tugma havolasini topish uchun uni alohida -- `invite:` prefiksi
-        # bilan title maydonining davomida emas, balki saqlashning eng
-        # sodda yo'li: channel_id'ni "<chat.id>|<invite_link>" qilib
-        # saqlaymiz, keyboard shu yerdan ajratib oladi.
+        # `channel_id` ustuniga TEKSHIRISH uchun haqiqiy chat.id, tugma
+        # havolasi esa "<chat.id>|<invite_link>" formatida saqlanadi.
         stored_id = f"{chat.id}|{invite_link}" if invite_link else str(chat.id)
         await database.add_required_channel(stored_id, chat.title or ref)
         await message.reply(t(lang, "admin_channel_added"))
     except Exception:
         await message.reply(t(lang, "admin_channel_add_error"))
+    await _show_channels(client, message.chat.id, lang)
+
+
+async def _do_add_ext_link(client: Client, message: Message, lang: str):
+    """Tashqi havola (Instagram va h.k.) -- hech qachon tekshirilmaydi,
+    a'zolik soni hisoblanmaydi. "Nom | havola" yoki shunchaki havola
+    qabul qilinadi (nom berilmasa domendan avtomatik olinadi)."""
+    text = (message.text or "").strip()
+    if "|" in text:
+        title, url = [x.strip() for x in text.split("|", 1)]
+    else:
+        url = text
+        parsed = urllib.parse.urlparse(url if "://" in url else "https://" + url)
+        parts = [p for p in parsed.path.split("/") if p]
+        title = f"{parsed.netloc}/{parts[0]}" if parts else parsed.netloc
+
+    await database.add_required_channel(f"ext:{url}", title)
+    await message.reply(t(lang, "admin_channel_added"))
     await _show_channels(client, message.chat.id, lang)
 
 
@@ -497,8 +504,12 @@ def register(client: Client) -> None:
             await _show_channels(c, chat_id, lang, msg_id)
 
         elif data == "adm:chan_add":
-            handlers.admin_flow[uid] = {"action": "add_channel"}
-            await c.edit_message_text(chat_id, msg_id, t(lang, "admin_ask_channel"))
+            handlers.admin_flow[uid] = {"action": "add_tg_channel"}
+            await c.edit_message_text(chat_id, msg_id, t(lang, "admin_ask_tg_channel"))
+
+        elif data == "adm:chan_add_ext":
+            handlers.admin_flow[uid] = {"action": "add_ext_link"}
+            await c.edit_message_text(chat_id, msg_id, t(lang, "admin_ask_ext_link"))
 
         elif data == "adm:chan_remove":
             handlers.admin_flow[uid] = {"action": "remove_channel"}
