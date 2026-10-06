@@ -3,7 +3,7 @@
   "language_set": "✅ Til o'zbekchaga o'rnatildi.",
   "banned": "🚫 Siz botdan foydalanish huquqidan mahrum qilingansiz.",
 
-  "start_text": "👋 Salom, {name}!\n\nMen rasm va PDF bilan ishlayman:\n\n📸 Menga rasm(lar) yuborsangiz — ularni bitta PDF faylga aylantirib beraman.\n📄 Menga PDF fayl yuborsangiz — har bir sahifasini alohida rasm qilib, albumga yig'ib qaytaraman.\n\nShunchaki boshlang — rasm yoki PDF yuboring! 👇",
+  "start_text": "👋 Salom, {name}!\n\n📄 PDF yuboring — men uni siz uchun o'qib beraman, hech qanday ilova yoki PDF reader o'rnatish shart emas, keraksiz reklamalarni ko'rishga hojat yo'q!\n\n📸 Rasm(lar) yuboring — bir zumda chiroyli PDF faylga aylantirib beraman.\n\nShunchaki boshlang — rasm yoki PDF yuboring! 👇",
 
   "force_sub_required": "📢 Botdan foydalanish uchun quyidagi kanal(lar)ga obuna bo'ling, so'ng \"✅ Tekshirish\" tugmasini bosing:",
   "force_sub_channel_btn": "📢 {num}-kanal",
@@ -16,7 +16,7 @@
   "menu_btn_cancel": "❌ Bekor qilish",
   "menu_btn_admin_panel": "🛠 Admin panel",
 
-  "info_text": "ℹ️ **Bot haqida**\n\n📸 Rasm yuboring → PDF qilib beraman.\n📄 PDF yuboring → har sahifasini rasm qilib qaytaraman.\n\nRasmlarni ketma-ket yuborishingiz mumkin, keyin \"✅ Tayyor\" tugmasini bosing. Agar 30 soniya davomida yangi rasm yubormasangiz yoki tugmani bosmasangiz — avtomatik PDF qilinadi.\n\n👨‍💻 Admin: @{admin_username}",
+  "info_text": "ℹ️ **Bot haqida**\n\n📄 PDF yuboring — men uni o'qib beraman! Turli xil PDF reader ilovalarini o'rnatib, ularning asabga tegadigan reklamalarini ko'rishga endi hojat yo'q.\n📸 Rasm yuboring → tez va chiroyli PDF qilib beraman.\n\nRasmlarni ketma-ket yuborishingiz mumkin, keyin \"✅ Tayyor\" tugmasini bosing. Agar 30 soniya davomida yangi rasm yubormasangiz yoki tugmani bosmasangiz — avtomatik PDF qilinadi.\n\n👨‍💻 Admin: @{admin_username}",
 
   "collecting_status": "📸 Rasmlar qabul qilindi: {count}{max_suffix}\n\nYana rasm yuborishingiz mumkin, yoki \"✅ Tayyor\" tugmasini bosing.\n⏱ 30 soniya ichida yangi rasm kelmasa — avtomatik PDF qilinadi.",
   "collecting_status_max_suffix": "/{max}",
@@ -45,13 +45,12 @@
   "premium_btn_test": "🌟 Premium haqida (test)",
   "premium_info_popup": "🌟 Premium tez kunda ishga tushadi — limitsiz PDF, tezroq ishlov va boshqa imkoniyatlar bilan!",
 
-  "menu_btn_stats": "📊 Mening statistikam",
   "menu_btn_language": "🌐 Til / Language",
-  "menu_btn_profile": "👤 Kabinetim",
+  "menu_btn_profile": "📊 Statistika",
 
   "user_stats_text": "📊 **Mening statistikam**\n\n📸 Jami rasm yubordim: {images_sent}\n📄 PDF yasadim (jami/bugun): {pdfs_created} / {pdfs_created_today}\n📖 PDF o'qidim (jami/bugun): {pdfs_read} / {pdfs_read_today}",
 
-  "profile_text": "👤 **Kabinetim**\n\n🆔 ID: `{id}`\n👋 Ism: {name}\n⭐ Daraja: {tier}\n\n📄 Kunlik PDF yaratish: {used_create}/{limit_create}\n📖 Kunlik PDF o'qish: {used_read}/{limit_read}\n🖼 1 PDF uchun max rasm: {max_images}",
+  "profile_text": "👤 **Kabinetim**\n\n🆔 ID: `{id}`\n👋 Ism: {name}\n⭐ Daraja: {tier}\n\n📄 Kunlik PDF yaratish: {used_create}/{limit_create}\n📖 Kunlik PDF o'qish: {used_read}/{limit_read}\n🖼 1 PDF uchun max rasm: {max_images}\n\n📊 **Jami natijalarim:**\n📸 Rasm yubordim: {images_sent}\n📄 PDF yasadim: {pdfs_created}\n📖 PDF o'qidim: {pdfs_read}",
   "profile_tier_standard": "Oddiy",
   "profile_tier_premium": "Premium ⭐",
   "profile_unlimited": "cheklovsiz",
@@ -77,16 +76,17 @@
   "admin_btn_memory": "🧹 Xotira",
   "admin_btn_back": "⬅️ Orqaga",
 
-  "admin_stats_text": "📊 **Umumiy statistika**\n\n👥 Jami foydalanuvchi: {total_users}\n🆕 Bugun qo'shildi: {today_new}\n\n📄 Bugun PDF qilindi: {today_pdfs}\n📄 Jami PDF qilindi: {total_pdfs}\n📖 Jami PDF o'qildi: {total_read}\n💾 Jami qayta ishlangan hajm: {total_mb} MB\n\n🌐 Til bo'yicha: 🇺🇿 {lang_uz} | 🇬🇧 {lang_en}",
+  "admin_stats_text": "📊 **Umumiy statistika**\n\n📌 **Jami:**\n👥 Foydalanuvchilar: {total_users}\n📸 Qabul qilingan rasmlar: {total_images}\n📄 PDF yasaldi: {total_pdfs}\n📖 PDF o'qildi: {total_read}\n💾 Qayta ishlangan hajm: {total_mb} MB\n🌐 Til bo'yicha: 🇺🇿 {lang_uz} | 🇬🇧 {lang_en}\n\n📅 **Bugun:**\n🆕 Yangi foydalanuvchi: {today_new}\n📸 Rasm qabul qilindi: {today_images}\n📄 PDF yasaldi: {today_pdfs}\n📖 PDF o'qildi: {today_read}\n💾 Hajm: {today_mb} MB",
 
   "admin_search_prompt": "🔎 Foydalanuvchi ID yoki username'ini yozing:",
   "admin_search_not_found": "❌ Hech narsa topilmadi.",
-  "admin_user_card": "👤 **Foydalanuvchi**\n\nID: `{id}`\nUsername: @{username}\nIsm: {name}\nTil: {user_lang}\nBotga kirgan: {joined}\nHolat: {status}\n\n📸 Rasm yubordi: {images_sent}\n📄 PDF yasadi (jami/bugun): {pdfs_created} / {pdfs_created_today}\n📖 PDF o'qidi (jami/bugun): {pdfs_read} / {pdfs_read_today}\n\n⚙️ Shaxsiy limit — yaratish: {create_limit}, o'qish: {read_limit} (0 = cheklovsiz)",
+  "admin_user_card": "👤 **Foydalanuvchi**\n\nID: `{id}`\nUsername: @{username}\nIsm: {name}\nTil: {user_lang}\nBotga kirgan: {joined}\nHolat: {status}\n\n📸 Rasm yubordi: {images_sent}\n📄 PDF yasadi (jami/bugun): {pdfs_created} / {pdfs_created_today}\n📖 PDF o'qidi (jami/bugun): {pdfs_read} / {pdfs_read_today}\n\n⚙️ Shaxsiy limit — yaratish: {create_limit}, o'qish: {read_limit}, max rasm (1 PDF): {max_images} (0 = global sozlama)",
   "admin_btn_ban": "🚫 Ban",
   "admin_btn_unban": "✅ Unban",
   "admin_btn_message_user": "✉️ Xabar yozish",
   "admin_btn_limit_create": "📄 PDF yaratish limiti",
   "admin_btn_limit_read": "📖 PDF o'qish limiti",
+  "admin_btn_limit_max_images": "🖼 Max rasm (1 PDF)",
   "admin_banned_user": "🚫 Foydalanuvchi bloklandi.",
   "admin_unbanned_user": "✅ Foydalanuvchi blokdan chiqarildi.",
   "admin_ask_user_message": "✏️ Shu foydalanuvchiga yubormoqchi bo'lgan xabaringizni yozing:",

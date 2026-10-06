@@ -3,7 +3,7 @@
   "language_set": "✅ Language set to English.",
   "banned": "🚫 You have been banned from using this bot.",
 
-  "start_text": "👋 Hi, {name}!\n\nI work with images and PDFs:\n\n📸 Send me image(s) — I'll turn them into one PDF file.\n📄 Send me a PDF — I'll split it into pages and send each page back as an image album.\n\nJust send an image or a PDF to get started! 👇",
+  "start_text": "👋 Hi, {name}!\n\n📄 Send a PDF — I'll read it for you, no need to install any app or PDF reader, and no annoying ads to deal with!\n\n📸 Send image(s) — I'll turn them into a clean PDF in seconds.\n\nJust send an image or a PDF to get started! 👇",
 
   "force_sub_required": "📢 To use this bot, please join the channel(s) below, then press \"✅ Check\":",
   "force_sub_channel_btn": "📢 Channel {num}",
@@ -16,7 +16,7 @@
   "menu_btn_cancel": "❌ Cancel",
   "menu_btn_admin_panel": "🛠 Admin panel",
 
-  "info_text": "ℹ️ **About this bot**\n\n📸 Send an image → I'll make a PDF.\n📄 Send a PDF → I'll return each page as an image.\n\nYou can send several images in a row, then press \"✅ Done\". If you don't send a new image or press the button within 30 seconds — the PDF is created automatically.\n\n👨‍💻 Admin: @{admin_username}",
+  "info_text": "ℹ️ **About this bot**\n\n📄 Send a PDF — I'll read it for you! No more installing random PDF reader apps just to deal with their annoying ads.\n📸 Send an image → I'll turn it into a clean PDF, fast.\n\nYou can send several images in a row, then press \"✅ Done\". If you don't send a new image or press the button within 30 seconds — the PDF is created automatically.\n\n👨‍💻 Admin: @{admin_username}",
 
   "collecting_status": "📸 Images received: {count}{max_suffix}\n\nYou can send more, or press \"✅ Done\".\n⏱ If no new image arrives within 30 seconds — the PDF is created automatically.",
   "collecting_status_max_suffix": "/{max}",
@@ -45,13 +45,12 @@
   "premium_btn_test": "🌟 About Premium (test)",
   "premium_info_popup": "🌟 Premium is launching soon — unlimited PDFs, faster processing, and more!",
 
-  "menu_btn_stats": "📊 My stats",
   "menu_btn_language": "🌐 Til / Language",
-  "menu_btn_profile": "👤 My profile",
+  "menu_btn_profile": "📊 Statistics",
 
   "user_stats_text": "📊 **My stats**\n\n📸 Images sent total: {images_sent}\n📄 PDFs created (total/today): {pdfs_created} / {pdfs_created_today}\n📖 PDFs read (total/today): {pdfs_read} / {pdfs_read_today}",
 
-  "profile_text": "👤 **My profile**\n\n🆔 ID: `{id}`\n👋 Name: {name}\n⭐ Tier: {tier}\n\n📄 Daily PDF creation: {used_create}/{limit_create}\n📖 Daily PDF reading: {used_read}/{limit_read}\n🖼 Max images per PDF: {max_images}",
+  "profile_text": "👤 **My profile**\n\n🆔 ID: `{id}`\n👋 Name: {name}\n⭐ Tier: {tier}\n\n📄 Daily PDF creation: {used_create}/{limit_create}\n📖 Daily PDF reading: {used_read}/{limit_read}\n🖼 Max images per PDF: {max_images}\n\n📊 **My totals:**\n📸 Images sent: {images_sent}\n📄 PDFs created: {pdfs_created}\n📖 PDFs read: {pdfs_read}",
   "profile_tier_standard": "Standard",
   "profile_tier_premium": "Premium ⭐",
   "profile_unlimited": "unlimited",
@@ -77,16 +76,17 @@
   "admin_btn_memory": "🧹 Memory",
   "admin_btn_back": "⬅️ Back",
 
-  "admin_stats_text": "📊 **Overview**\n\n👥 Total users: {total_users}\n🆕 New today: {today_new}\n\n📄 PDFs today: {today_pdfs}\n📄 PDFs total: {total_pdfs}\n📖 PDFs read total: {total_read}\n💾 Total data processed: {total_mb} MB\n\n🌐 By language: 🇺🇿 {lang_uz} | 🇬🇧 {lang_en}",
+  "admin_stats_text": "📊 **Overview**\n\n📌 **Total:**\n👥 Users: {total_users}\n📸 Images received: {total_images}\n📄 PDFs created: {total_pdfs}\n📖 PDFs read: {total_read}\n💾 Data processed: {total_mb} MB\n🌐 By language: 🇺🇿 {lang_uz} | 🇬🇧 {lang_en}\n\n📅 **Today:**\n🆕 New users: {today_new}\n📸 Images received: {today_images}\n📄 PDFs created: {today_pdfs}\n📖 PDFs read: {today_read}\n💾 Data: {today_mb} MB",
 
   "admin_search_prompt": "🔎 Type a user ID or username:",
   "admin_search_not_found": "❌ Nothing found.",
-  "admin_user_card": "👤 **User**\n\nID: `{id}`\nUsername: @{username}\nName: {name}\nLanguage: {user_lang}\nJoined: {joined}\nStatus: {status}\n\n📸 Images sent: {images_sent}\n📄 PDFs created (total/today): {pdfs_created} / {pdfs_created_today}\n📖 PDFs read (total/today): {pdfs_read} / {pdfs_read_today}\n\n⚙️ Personal limit — create: {create_limit}, read: {read_limit} (0 = unlimited)",
+  "admin_user_card": "👤 **User**\n\nID: `{id}`\nUsername: @{username}\nName: {name}\nLanguage: {user_lang}\nJoined: {joined}\nStatus: {status}\n\n📸 Images sent: {images_sent}\n📄 PDFs created (total/today): {pdfs_created} / {pdfs_created_today}\n📖 PDFs read (total/today): {pdfs_read} / {pdfs_read_today}\n\n⚙️ Personal limit — create: {create_limit}, read: {read_limit}, max images (per PDF): {max_images} (0 = global setting)",
   "admin_btn_ban": "🚫 Ban",
   "admin_btn_unban": "✅ Unban",
   "admin_btn_message_user": "✉️ Message",
   "admin_btn_limit_create": "📄 Create limit",
   "admin_btn_limit_read": "📖 Read limit",
+  "admin_btn_limit_max_images": "🖼 Max images (per PDF)",
   "admin_banned_user": "🚫 User banned.",
   "admin_unbanned_user": "✅ User unbanned.",
   "admin_ask_user_message": "✏️ Write the message to send to this user:",
