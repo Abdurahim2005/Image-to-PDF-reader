@@ -46,7 +46,9 @@
   "premium_info_popup": "🌟 Premium is launching soon — unlimited PDFs, faster processing, and more!",
 
   "menu_btn_language": "🌐 Til / Language",
-  "menu_btn_profile": "📊 Statistics",
+  "menu_btn_profile": "👤 My profile",
+  "menu_btn_stats": "📊 Statistics",
+  "public_stats_text": "📊 **Bot statistics**\n\n👥 Users: {total_users}\n📸 Images received: {total_images}\n📄 PDFs created: {total_pdfs}\n📖 PDFs read: {total_read}",
 
   "user_stats_text": "📊 **My stats**\n\n📸 Images sent total: {images_sent}\n📄 PDFs created (total/today): {pdfs_created} / {pdfs_created_today}\n📖 PDFs read (total/today): {pdfs_read} / {pdfs_read_today}",
 
@@ -108,12 +110,15 @@
   "admin_broadcast_sending": "⏳ Sending... ({sent}/{total})",
   "admin_broadcast_done": "✅ Sent: {sent}/{total} ({failed} failed)",
 
-  "admin_channels_text": "📢 **Required channels**\n\n{list}",
+  "admin_channels_text": "📢 **Required channels:**\n{tg_list}\n\n🔗 **External links:**\n{ext_list}",
   "admin_channels_empty": "No channels added yet.",
   "admin_channel_row": "{num}. {title} — joined: {count}",
-  "admin_btn_add_channel": "➕ Add channel",
+  "admin_ext_link_row": "{num}. {title}",
+  "admin_btn_add_channel": "➕ Add required channel",
+  "admin_btn_add_ext_link": "➕ Add external link",
   "admin_btn_remove_channel": "➖ Remove channel",
-  "admin_ask_channel": "✏️ To add:\n\n• Telegram channel — send @username or a t.me/... link (the bot must be admin there)\n• External link (Instagram etc.) — send \"Name | https://link\" or just the link\n\nAn external link is NEVER checked and never blocks the bot, it's just always shown in the list.",
+  "admin_ask_tg_channel": "✏️ Send the required Telegram channel — its ID (e.g. -1001234567890) or @username, either works. The bot must be an ADMIN there.",
+  "admin_ask_ext_link": "✏️ Send the external link (Instagram etc.) — as \"Name | https://link\", or just the link itself (the name will be auto-detected).\n\nThis link is NEVER checked and its member count is NEVER tracked.",
   "admin_channel_added": "✅ Channel added.",
   "admin_channel_add_error": "❌ Couldn't add this channel. Make sure the bot is an admin there.",
   "admin_ask_remove_channel": "✏️ Enter the number of the channel to remove:",

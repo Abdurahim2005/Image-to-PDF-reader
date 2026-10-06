@@ -46,7 +46,9 @@
   "premium_info_popup": "🌟 Premium tez kunda ishga tushadi — limitsiz PDF, tezroq ishlov va boshqa imkoniyatlar bilan!",
 
   "menu_btn_language": "🌐 Til / Language",
-  "menu_btn_profile": "📊 Statistika",
+  "menu_btn_profile": "👤 Kabinetim",
+  "menu_btn_stats": "📊 Statistika",
+  "public_stats_text": "📊 **Bot statistikasi**\n\n👥 Foydalanuvchilar: {total_users}\n📸 Qabul qilingan rasmlar: {total_images}\n📄 Yasalgan PDF'lar: {total_pdfs}\n📖 O'qilgan PDF'lar: {total_read}",
 
   "user_stats_text": "📊 **Mening statistikam**\n\n📸 Jami rasm yubordim: {images_sent}\n📄 PDF yasadim (jami/bugun): {pdfs_created} / {pdfs_created_today}\n📖 PDF o'qidim (jami/bugun): {pdfs_read} / {pdfs_read_today}",
 
@@ -108,12 +110,15 @@
   "admin_broadcast_sending": "⏳ Yuborilmoqda... ({sent}/{total})",
   "admin_broadcast_done": "✅ Yuborildi: {sent}/{total} ({failed} ta xato)",
 
-  "admin_channels_text": "📢 **Majburiy obuna kanallari**\n\n{list}",
+  "admin_channels_text": "📢 **Majburiy kanallar:**\n{tg_list}\n\n🔗 **Tashqi havolalar:**\n{ext_list}",
   "admin_channels_empty": "Hozircha kanal qo'shilmagan.",
   "admin_channel_row": "{num}. {title} — a'zo: {count}",
-  "admin_btn_add_channel": "➕ Kanal qo'shish",
+  "admin_ext_link_row": "{num}. {title}",
+  "admin_btn_add_channel": "➕ Majburiy kanal qo'shish",
+  "admin_btn_add_ext_link": "➕ Tashqi havola qo'shish",
   "admin_btn_remove_channel": "➖ Kanal o'chirish",
-  "admin_ask_channel": "✏️ Qo'shish uchun:\n\n• Telegram kanal — @username yoki t.me/... havola yuboring (bot shu kanalda admin bo'lishi shart)\n• Tashqi havola (Instagram va h.k.) — \"Nom | https://havola\" formatida yoki shunchaki havolani yuboring\n\nTashqi havola HECH QACHON tekshirilmaydi va botni bloklamaydi, faqat ro'yxatda doim ko'rsatiladi.",
+  "admin_ask_tg_channel": "✏️ Majburiy Telegram kanalni yuboring — ID raqami (masalan -1001234567890) yoki @username, ikkisidan birini yuborsangiz bo'ldi. Bot shu kanalda ADMIN bo'lishi shart.",
+  "admin_ask_ext_link": "✏️ Tashqi havolani yuboring (Instagram va h.k.) — \"Nom | https://havola\" formatida, yoki shunchaki havolaning o'zini yuborsangiz ham bo'ladi (nom avtomatik olinadi).\n\nBu havola HECH QACHON tekshirilmaydi va a'zolar soni hisoblanmaydi.",
   "admin_channel_added": "✅ Kanal qo'shildi.",
   "admin_channel_add_error": "❌ Kanalni qo'shib bo'lmadi. Bot shu kanalda admin ekanini tekshiring.",
   "admin_ask_remove_channel": "✏️ O'chirish uchun kanal raqamini kiriting:",
