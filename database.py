@@ -150,9 +150,17 @@ async def init_db() -> None:
             pdfs_read_date    TEXT DEFAULT '',
             bytes_processed   INTEGER DEFAULT 0,
             daily_create_limit INTEGER DEFAULT 0,
-            daily_read_limit  INTEGER DEFAULT 0
+            daily_read_limit  INTEGER DEFAULT 0,
+            max_images_per_pdf INTEGER DEFAULT 0
         )
     """)
+    # Eski bazalarda `max_images_per_pdf` ustuni bo'lmasligi mumkin --
+    # `CREATE TABLE IF NOT EXISTS` mavjud jadvalni o'zgartirmaydi,
+    # shuning uchun bir martalik ALTER TABLE orqali qo'shamiz.
+    try:
+        await c.execute("ALTER TABLE users ADD COLUMN max_images_per_pdf INTEGER DEFAULT 0")
+    except Exception:
+        pass  # ustun allaqachon mavjud
 
     await c.execute("""
         CREATE TABLE IF NOT EXISTS pending_files (
@@ -170,9 +178,14 @@ async def init_db() -> None:
             new_users      INTEGER DEFAULT 0,
             pdfs_created   INTEGER DEFAULT 0,
             pdfs_read      INTEGER DEFAULT 0,
-            images_sent    INTEGER DEFAULT 0
+            images_sent    INTEGER DEFAULT 0,
+            bytes_processed INTEGER DEFAULT 0
         )
     """)
+    try:
+        await c.execute("ALTER TABLE daily_stats ADD COLUMN bytes_processed INTEGER DEFAULT 0")
+    except Exception:
+        pass
 
     await c.execute("""
         CREATE TABLE IF NOT EXISTS required_channels (
@@ -280,9 +293,14 @@ async def set_banned(telegram_id: int, banned: bool) -> None:
 
 
 async def set_user_limit(telegram_id: int, kind: str, value: int) -> None:
-    """`kind`: 'create' yoki 'read' -- shu foydalanuvchiga SHAXSIY kunlik
-    limit qo'yadi (0 = cheklovsiz)."""
-    col = "daily_create_limit" if kind == "create" else "daily_read_limit"
+    """`kind`: 'create' | 'read' | 'max_images' -- shu foydalanuvchiga
+    SHAXSIY limit qo'yadi (0 = cheklovsiz / global sozlamadan foydalanish)."""
+    col_map = {
+        "create": "daily_create_limit",
+        "read": "daily_read_limit",
+        "max_images": "max_images_per_pdf",
+    }
+    col = col_map[kind]
     c = get_client()
     await c.execute(f"UPDATE users SET {col} = ? WHERE telegram_id = ?", [value, telegram_id])
 
@@ -304,8 +322,13 @@ async def _reset_daily_counter_if_needed(telegram_id: int, field_count: str, fie
 
 
 async def get_max_images_per_pdf(telegram_id: int) -> int:
-    """0 = cheklovsiz. Global sozlamadan olinadi (hozircha foydalanuvchiga
-    xos emas)."""
+    """0 = cheklovsiz. Foydalanuvchining SHAXSIY limiti bo'lsa (0'dan
+    katta) -- shu ishlatiladi; bo'lmasa global sozlamadagi standart
+    qiymat qaytariladi."""
+    user = await get_user(telegram_id)
+    personal = (user or {}).get("max_images_per_pdf") or 0
+    if personal > 0:
+        return personal
     s = await get_settings()
     return s.get("max_images_per_pdf") or 0
 
@@ -340,6 +363,7 @@ async def record_pdf_created(telegram_id: int, size_bytes: int) -> None:
         [size_bytes, telegram_id],
     )
     await bump_daily_stat("pdfs_created")
+    await bump_daily_stat("bytes_processed", by=size_bytes)
 
 
 async def record_pdf_read(telegram_id: int, size_bytes: int) -> None:
@@ -351,6 +375,7 @@ async def record_pdf_read(telegram_id: int, size_bytes: int) -> None:
         [size_bytes, telegram_id],
     )
     await bump_daily_stat("pdfs_read")
+    await bump_daily_stat("bytes_processed", by=size_bytes)
 
 
 async def record_image_sent(telegram_id: int, size_bytes: int) -> None:
@@ -361,18 +386,19 @@ async def record_image_sent(telegram_id: int, size_bytes: int) -> None:
         [size_bytes, telegram_id],
     )
     await bump_daily_stat("images_sent")
+    await bump_daily_stat("bytes_processed", by=size_bytes)
 
 
 # ════════════════════════════════════════════════════════════
 #  KUNLIK STATISTIKA (7-kunlik grafik uchun)
 # ════════════════════════════════════════════════════════════
-async def bump_daily_stat(field: str) -> None:
+async def bump_daily_stat(field: str, by: int = 1) -> None:
     c = get_client()
     today = _today()
     await c.execute(
         "INSERT INTO daily_stats (day) VALUES (?) ON CONFLICT(day) DO NOTHING", [today]
     )
-    await c.execute(f"UPDATE daily_stats SET {field} = {field} + 1 WHERE day = ?", [today])
+    await c.execute(f"UPDATE daily_stats SET {field} = {field} + ? WHERE day = ?", [by, today])
 
 
 async def get_last_n_days_stats(n: int = 7) -> list[dict]:
@@ -388,32 +414,44 @@ async def get_last_n_days_stats(n: int = 7) -> list[dict]:
 #  UMUMIY STATISTIKA (admin panel bosh sahifasi)
 # ════════════════════════════════════════════════════════════
 async def get_overview_stats() -> dict:
+    """Admin panel -- bosh statistika. JAMI (butun vaqt) va BUGUNGI
+    ko'rsatkichlarni alohida qaytaradi: foydalanuvchi, rasm, PDF
+    yasash, PDF o'qish, qayta ishlangan hajm."""
     c = get_client()
     today = _today()
 
     total_users = (await c.execute("SELECT COUNT(*) FROM users")).rows[0][0]
-    today_new = (await c.execute(
-        "SELECT COUNT(*) FROM users WHERE joined_date = ?", [today]
-    )).rows[0][0]
-    today_pdfs = (await c.execute(
-        "SELECT pdfs_created FROM daily_stats WHERE day = ?", [today]
-    )).rows
-    today_pdfs_count = today_pdfs[0][0] if today_pdfs else 0
+    total_images = (await c.execute("SELECT COALESCE(SUM(images_sent), 0) FROM users")).rows[0][0]
     total_pdfs = (await c.execute("SELECT COALESCE(SUM(pdfs_created), 0) FROM users")).rows[0][0]
     total_read = (await c.execute("SELECT COALESCE(SUM(pdfs_read), 0) FROM users")).rows[0][0]
     total_bytes = (await c.execute("SELECT COALESCE(SUM(bytes_processed), 0) FROM users")).rows[0][0]
     lang_uz = (await c.execute("SELECT COUNT(*) FROM users WHERE language = 'uz'")).rows[0][0]
     lang_en = (await c.execute("SELECT COUNT(*) FROM users WHERE language = 'en'")).rows[0][0]
 
+    today_new = (await c.execute(
+        "SELECT COUNT(*) FROM users WHERE joined_date = ?", [today]
+    )).rows[0][0]
+    today_row = (await c.execute(
+        "SELECT new_users, pdfs_created, pdfs_read, images_sent, bytes_processed FROM daily_stats WHERE day = ?", [today]
+    )).rows
+    if today_row:
+        _, today_pdfs, today_read, today_images, today_bytes = today_row[0]
+    else:
+        today_pdfs, today_read, today_images, today_bytes = 0, 0, 0, 0
+
     return {
         "total_users": total_users,
-        "today_new": today_new,
-        "today_pdfs": today_pdfs_count,
+        "total_images": total_images,
         "total_pdfs": total_pdfs,
         "total_read": total_read,
         "total_bytes": total_bytes,
         "lang_uz": lang_uz,
         "lang_en": lang_en,
+        "today_new": today_new,
+        "today_pdfs": today_pdfs,
+        "today_read": today_read,
+        "today_images": today_images,
+        "today_bytes": today_bytes or 0,
     }
 
 

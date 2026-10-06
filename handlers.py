@@ -783,22 +783,6 @@ def _register_user_handlers(client: Client) -> None:
         await m.reply(t(lang, "info_text", admin_username=_admin_username()))
 
     @client.on_message(filters.private & filters.text & filters.create(
-        lambda _, __, m: m.text in (t("uz", "menu_btn_stats"), t("en", "menu_btn_stats"))
-    ))
-    async def menu_stats(c, m):
-        uid = m.from_user.id
-        lang = await _lang(uid)
-        user = await database.get_user(uid)
-        if not user:
-            return
-        await m.reply(t(
-            lang, "user_stats_text",
-            images_sent=user.get("images_sent") or 0,
-            pdfs_created=user.get("pdfs_created") or 0, pdfs_created_today=user.get("pdfs_created_today") or 0,
-            pdfs_read=user.get("pdfs_read") or 0, pdfs_read_today=user.get("pdfs_read_today") or 0,
-        ))
-
-    @client.on_message(filters.private & filters.text & filters.create(
         lambda _, __, m: m.text in (t("uz", "menu_btn_profile"), t("en", "menu_btn_profile"))
     ))
     async def menu_profile(c, m):
@@ -821,6 +805,9 @@ def _register_user_handlers(client: Client) -> None:
             used_create=used_create, limit_create=limit_create_s,
             used_read=used_read, limit_read=limit_read_s,
             max_images=max_images_s,
+            images_sent=user.get("images_sent") or 0,
+            pdfs_created=user.get("pdfs_created") or 0,
+            pdfs_read=user.get("pdfs_read") or 0,
         ))
 
     @client.on_message(filters.private & filters.text & filters.create(

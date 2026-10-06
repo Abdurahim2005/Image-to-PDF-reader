@@ -172,10 +172,11 @@ async def _show_stats(client: Client, chat_id: int, lang: str, msg_id: int):
     s = await database.get_overview_stats()
     text = t(
         lang, "admin_stats_text",
-        total_users=s["total_users"], today_new=s["today_new"],
-        today_pdfs=s["today_pdfs"], total_pdfs=s["total_pdfs"],
-        total_read=s["total_read"], total_mb=_mb(s["total_bytes"]),
+        total_users=s["total_users"], total_images=s["total_images"],
+        total_pdfs=s["total_pdfs"], total_read=s["total_read"], total_mb=_mb(s["total_bytes"]),
         lang_uz=s["lang_uz"], lang_en=s["lang_en"],
+        today_new=s["today_new"], today_images=s["today_images"],
+        today_pdfs=s["today_pdfs"], today_read=s["today_read"], today_mb=_mb(s["today_bytes"]),
     )
     await client.edit_message_text(chat_id, msg_id, text, reply_markup=keyboards.admin_back_kb(lang))
 
@@ -245,6 +246,7 @@ async def _show_user_card(client: Client, chat_id: int, lang: str, target_uid: i
         pdfs_created=user.get("pdfs_created") or 0, pdfs_created_today=user.get("pdfs_created_today") or 0,
         pdfs_read=user.get("pdfs_read") or 0, pdfs_read_today=user.get("pdfs_read_today") or 0,
         create_limit=user.get("daily_create_limit") or 0, read_limit=user.get("daily_read_limit") or 0,
+        max_images=user.get("max_images_per_pdf") or 0,
     )
     kb = keyboards.admin_user_card_kb(lang, target_uid, bool(user.get("is_banned")), back_offset)
     if edit_msg_id:

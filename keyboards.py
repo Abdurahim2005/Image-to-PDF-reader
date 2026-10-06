@@ -14,9 +14,8 @@ def language_kb() -> InlineKeyboardMarkup:
 
 def main_menu_kb(lang: str, is_admin: bool = False) -> ReplyKeyboardMarkup:
     rows = [
-        [KeyboardButton(t(lang, "menu_btn_profile")), KeyboardButton(t(lang, "menu_btn_stats"))],
-        [KeyboardButton(t(lang, "menu_btn_contact_admin")), KeyboardButton(t(lang, "menu_btn_language"))],
-        [KeyboardButton(t(lang, "menu_btn_info"))],
+        [KeyboardButton(t(lang, "menu_btn_profile")), KeyboardButton(t(lang, "menu_btn_language"))],
+        [KeyboardButton(t(lang, "menu_btn_contact_admin")), KeyboardButton(t(lang, "menu_btn_info"))],
     ]
     if is_admin:
         rows.append([KeyboardButton(t(lang, "menu_btn_admin_panel"))])
@@ -143,6 +142,7 @@ def admin_user_card_kb(lang: str, telegram_id: int, is_banned: bool, back_offset
         [ban_btn, InlineKeyboardButton(t(lang, "admin_btn_message_user"), callback_data=f"adm:msg:{telegram_id}")],
         [InlineKeyboardButton(t(lang, "admin_btn_limit_create"), callback_data=f"adm:ulimit:create:{telegram_id}"),
          InlineKeyboardButton(t(lang, "admin_btn_limit_read"), callback_data=f"adm:ulimit:read:{telegram_id}")],
+        [InlineKeyboardButton(t(lang, "admin_btn_limit_max_images"), callback_data=f"adm:ulimit:max_images:{telegram_id}")],
         [InlineKeyboardButton(t(lang, "admin_btn_back"), callback_data=back_cb)],
     ])
 
