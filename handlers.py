@@ -4,6 +4,7 @@
 #  @app.on_message / @app.on_callback_query dekoratorlari ishlaydi.
 # ════════════════════════════════════════════════════════════
 import asyncio
+import logging
 import os
 import shutil
 import time
@@ -178,6 +179,7 @@ async def check_force_sub(client: Client, uid: int, chat_id: int, send_message: 
 #  RASM YIG'ISH / PDF YARATISH OQIMI
 # ════════════════════════════════════════════════════════════
 async def _cancel_collecting(uid: int, delete_status: bool = False, client: Client = None):
+    _gate_cache.pop(uid, None)
     state = collect_state.pop(uid, None)
     if not state:
         return
@@ -206,19 +208,6 @@ async def _collecting_status_text(lang: str, uid: int, count: int) -> str:
     max_images = await database.get_max_images_per_pdf(uid)
     max_suffix = t(lang, "collecting_status_max_suffix", max=max_images) if max_images > 0 else ""
     return t(lang, "collecting_status", count=count, max_suffix=max_suffix)
-
-
-async def _debounced_update_status(client: Client, uid: int, lang: str):
-    """Albomdagi 10 ta rasm uchun 10 marta emas, 1-2 marta tahrirlaydi."""
-    state = collect_state.get(uid)
-    if not state or state.get("status_pending"):
-        return
-    state["status_pending"] = True
-    await asyncio.sleep(0.7)
-    state = collect_state.get(uid)
-    if state:
-        state["status_pending"] = False
-    await _update_status(client, uid, lang)
 
 
 async def _update_status(client: Client, uid: int, lang: str):
@@ -261,99 +250,266 @@ def _bump_token(uid: int) -> int:
     return state["token"]
 
 
-async def _safe_delete(message: Message):
+# ════════════════════════════════════════════════════════════
+#  RASM QABUL QILISH -- "File-To-Zip" botining tez ishlash uslubida:
+#   * limit/obuna tekshiruvi har rasmda EMAS, batch boshida BIR marta
+#   * hisoblagichlar xotirada (bazaga har rasmda yozilmaydi)
+#   * yuklab olish lock ICHIDA emas -- rasmlar parallel yuklanadi
+#   * har rasmdan keyin xabar TAHRIRLANMAYDI: 1.5 soniyadan keyin bitta
+#     "qabul qilinmoqda..." xabari, hammasi yuklangach -- BITTA yakuniy
+#     xabar ("N ta rasm qabul qilindi" + Tayyor tugmasi)
+# ════════════════════════════════════════════════════════════
+_logger = logging.getLogger(__name__)
+
+# uid -> {"downloading": int, "accepted": int, "rejected": int,
+#         "recv_msg": Message | None, "timer": Task | None}
+_recv: dict[int, dict] = {}
+_RECV_NOTICE_DELAY = 1.5   # soniya
+_GATE_TTL = 20             # soniya -- tekshiruv natijasi shuncha eslab qolinadi
+_gate_cache: dict[int, tuple] = {}
+_warn_ts: dict[int, float] = {}
+
+
+def _get_recv(uid: int) -> dict:
+    r = _recv.get(uid)
+    if r is None:
+        r = {"downloading": 0, "accepted": 0, "rejected": 0, "recv_msg": None, "timer": None}
+        _recv[uid] = r
+    return r
+
+
+async def _safe_delete(message):
+    if message is None:
+        return
     try:
         await message.delete()
     except Exception:
         pass
 
 
-async def _handle_photo(client: Client, message: Message):
-    uid = message.from_user.id
-    lang = await _lang(uid)
+def _remove_file(path: str) -> None:
+    try:
+        if path and os.path.exists(path):
+            os.remove(path)
+    except Exception:
+        pass
 
+
+async def _warn_once(client: Client, chat_id: int, uid: int, text: str):
+    """Ogohlantirishni har rasm uchun emas, ~5 soniyada BIR marta yuboradi."""
+    now = time.monotonic()
+    if now - _warn_ts.get(uid, 0) < 5:
+        return
+    _warn_ts[uid] = now
+    try:
+        warn = await client.send_message(chat_id, text)
+    except Exception:
+        return
+    asyncio.create_task(_auto_delete_later(client, warn.chat.id, warn.id, 6))
+
+
+async def _gate_compute(client: Client, uid: int, chat_id: int) -> dict:
     user = await database.get_user(uid)
     if user and user.get("is_banned"):
-        return
-    if await check_force_sub(client, uid, message.chat.id):
-        return
+        return {"ok": False}
+    if await check_force_sub(client, uid, chat_id):
+        return {"ok": False}
+    lang = (user or {}).get("language") or config.DEFAULT_LANGUAGE
 
-    # PDF YARATISH limiti tugagan bo'lsa -- rasm UMUMAN qabul
-    # qilinmaydi (chatda qoldiriladi), hatto to'plam allaqachon
-    # boshlangan bo'lsa ham. Bu "Tayyor" bosilgandan keyin emas, HAR
-    # BIR rasm yuborilganda tekshiriladi -- aks holda limit kun
-    # davomida tugab qolsa, oldin boshlangan to'plamga qo'shilgan
-    # rasmlar baribir PDF qilinib yuborilib ketardi.
+    # PDF YARATISH limiti tugagan bo'lsa -- rasm qabul qilinmaydi
+    # (chatda qoldiriladi).
     allowed, used, limit = await database.can_create_pdf(uid)
     if not allowed:
-        await message.reply(
-            t(lang, "limit_create_reached", used=used, limit=limit) + "\n\n" + t(lang, "premium_ad"),
-            reply_markup=keyboards.premium_ad_kb(lang),
-        )
+        try:
+            await client.send_message(
+                chat_id,
+                t(lang, "limit_create_reached", used=used, limit=limit) + "\n\n" + t(lang, "premium_ad"),
+                reply_markup=keyboards.premium_ad_kb(lang),
+            )
+        except Exception:
+            pass
+        return {"ok": False}
+
+    max_images = await database.get_max_images_per_pdf(uid)
+    return {"ok": True, "lang": lang, "max_images": max_images}
+
+
+async def _gate(client: Client, uid: int, chat_id: int) -> dict:
+    """Bir vaqtda kelgan albom rasmlari BITTA tekshiruvni baham ko'radi;
+    ijobiy natija _GATE_TTL soniya eslab qolinadi, salbiy -- yo'q."""
+    now = time.monotonic()
+    ent = _gate_cache.get(uid)
+    if ent and ent[0] > now:
+        return await asyncio.shield(ent[1])
+    fut = asyncio.ensure_future(_gate_compute(client, uid, chat_id))
+    _gate_cache[uid] = (now + _GATE_TTL, fut)
+    try:
+        res = await asyncio.shield(fut)
+    except Exception:
+        cur = _gate_cache.get(uid)
+        if cur and cur[1] is fut:
+            _gate_cache.pop(uid, None)
+        raise
+    if not res.get("ok"):
+        cur = _gate_cache.get(uid)
+        if cur and cur[1] is fut:
+            _gate_cache.pop(uid, None)
+    return res
+
+
+async def _recv_notice_job(client: Client, uid: int, chat_id: int, lang: str):
+    await asyncio.sleep(_RECV_NOTICE_DELAY)
+    recv = _recv.get(uid)
+    if not recv or recv["downloading"] <= 0 or recv["recv_msg"] is not None:
+        return
+    try:
+        msg = await client.send_message(chat_id, t(lang, "receiving_images"))
+    except Exception:
+        return
+    recv = _recv.get(uid)
+    if recv and recv["downloading"] > 0:
+        recv["recv_msg"] = msg
+    else:
+        await _safe_delete(msg)  # shu orada hammasi yuklanib bo'lgan
+
+
+def _schedule_recv_notice(client: Client, uid: int, chat_id: int, lang: str):
+    recv = _get_recv(uid)
+    old = recv.get("timer")
+    if old and not old.done():
+        old.cancel()
+    recv["timer"] = asyncio.ensure_future(_recv_notice_job(client, uid, chat_id, lang))
+
+
+async def _delete_status_msg(client: Client, chat_id: int, msg_id: int):
+    try:
+        await client.delete_messages(chat_id, msg_id)
+    except Exception:
+        pass
+
+
+async def _check_recv_complete(client: Client, uid: int, state: dict, lang: str, max_images: int):
+    """Har rasm yuklanib bo'lgach chaqiriladi. Hali yuklanayotgan rasm
+    bo'lsa -- hech narsa qilmaydi. Oxirgisi tugagach -- "qabul
+    qilinmoqda" xabarini o'chirib, BITTA yakuniy xabar yuboradi."""
+    recv = _recv.get(uid)
+    if not recv or recv["downloading"] > 0:
         return
 
-    # Albumdagi rasmlar bir-biridan millisekundlar farqi bilan kelishi
-    # mumkin -- shuning uchun shu foydalanuvchi uchun qabul qilishni
-    # KETMA-KET (bitta vaqtda faqat bitta rasm) qilamiz.
-    async with _get_photo_lock(uid):
-        state = collect_state.get(uid)
-        if state and state["stage"] in ("awaiting_filename", "building"):
-            # PDF qurilayotganda yoki nom kutilayotganda rasm yuborilsa
-            # -- foydalanuvchiga TUSHUNARLI ogohlantirish beramiz (jim
-            # qoldirmaymiz), rasmni esa qabul qilmaymiz.
-            key = "busy_building" if state["stage"] == "building" else "busy_awaiting_filename"
-            try:
-                await message.delete()
-            except Exception:
-                pass
-            warn = await client.send_message(message.chat.id, t(lang, key))
-            asyncio.create_task(_auto_delete_later(client, warn.chat.id, warn.id, 6))
-            return
+    # ── batch tugadi (quyidagi qism await'siz -- bo'linmaydi) ──
+    timer = recv.get("timer")
+    if timer and not timer.done():
+        timer.cancel()
+    recv["timer"] = None
+    recv_msg = recv["recv_msg"]
+    recv["recv_msg"] = None
+    accepted = recv["accepted"]
+    rejected = recv["rejected"]
+    recv["accepted"] = 0
+    recv["rejected"] = 0
+    if recv_msg is not None:
+        asyncio.create_task(_safe_delete(recv_msg))
 
-        max_images = await database.get_max_images_per_pdf(uid)
-        if state and max_images > 0 and len(state["images"]) >= max_images:
-            # 1 PDF uchun max rasm soniga yetilgan -- rasmni qabul
-            # qilmaymiz, "Tayyor" bosishni so'raymiz.
-            try:
-                await message.delete()
-            except Exception:
-                pass
-            warn = await client.send_message(message.chat.id, t(lang, "max_images_reached", max=max_images))
-            asyncio.create_task(_auto_delete_later(client, warn.chat.id, warn.id, 6))
-            return
+    if collect_state.get(uid) is not state:
+        return  # jarayon bekor qilingan yoki almashgan
+    if not state["items"]:
+        collect_state.pop(uid, None)  # birorta ham rasm yuklanmadi
+        return
+    if accepted == 0 and rejected == 0:
+        return  # yangi hech narsa yo'q -- eski status xabari qoladi
 
-        temp_dir = _user_temp_dir(uid)
-        local_path = os.path.join(temp_dir, f"img_{int(time.time() * 1000)}_{len(state['images']) if state else 0}.jpg")
+    count = len(state["items"])
+    max_suffix = t(lang, "collecting_status_max_suffix", max=max_images) if max_images > 0 else ""
+    text = t(lang, "collecting_status", count=count, max_suffix=max_suffix)
+    old_chat, old_id = state["status_chat_id"], state.get("status_msg_id")
+    try:
+        sent = await client.send_message(old_chat, text, reply_markup=keyboards.collecting_kb(lang))
+    except Exception:
+        return
+    if collect_state.get(uid) is not state:
+        await _safe_delete(sent)  # shu orada bekor qilingan
+        return
+    state["status_chat_id"] = sent.chat.id
+    state["status_msg_id"] = sent.id
+    if old_id:
+        asyncio.create_task(_delete_status_msg(client, old_chat, old_id))
+
+    if rejected > 0 and max_images > 0:
+        asyncio.create_task(_warn_once(client, sent.chat.id, uid, t(lang, "max_images_reached", max=max_images)))
+
+    token = _bump_token(uid)
+    asyncio.create_task(_idle_watchdog(client, uid, token, config.COLLECT_IDLE_TIMEOUT))
+
+
+async def _handle_photo(client: Client, message: Message):
+    uid = message.from_user.id
+    chat_id = message.chat.id
+
+    gate = await _gate(client, uid, chat_id)
+    if not gate.get("ok"):
+        return
+    lang = gate["lang"]
+    max_images = gate["max_images"]
+
+    # ── QABUL QILISH QARORI: pastdagi qism await'siz, shuning uchun
+    #    albomning 10 ta rasmi bir-biriga xalaqit bermaydi ──
+    state = collect_state.get(uid)
+    if state and state["stage"] in ("awaiting_filename", "building"):
+        key = "busy_building" if state["stage"] == "building" else "busy_awaiting_filename"
+        asyncio.create_task(_safe_delete(message))
+        asyncio.create_task(_warn_once(client, chat_id, uid, t(lang, key)))
+        return
+
+    recv = _get_recv(uid)
+    done_count = len(state["items"]) if state else 0
+    if max_images > 0 and done_count + recv["downloading"] >= max_images:
+        recv["rejected"] += 1
+        asyncio.create_task(_safe_delete(message))
+        if recv["downloading"] == 0:
+            # Hozir yuklanayotgan batch yo'q -- yakuniy xabar chiqmaydi,
+            # shuning uchun to'g'ridan-to'g'ri ogohlantiramiz.
+            recv["rejected"] = 0
+            asyncio.create_task(_warn_once(client, chat_id, uid, t(lang, "max_images_reached", max=max_images)))
+        return
+
+    if state is None:
+        state = {
+            "images": [], "items": {},
+            "status_chat_id": chat_id, "status_msg_id": None,
+            "stage": "collecting", "token": 0,
+        }
+        collect_state[uid] = state
+    state.setdefault("items", {})
+    _bump_token(uid)  # eski idle-watchdog eskirdi
+    recv["downloading"] += 1
+    if recv["downloading"] == 1:
+        _schedule_recv_notice(client, uid, chat_id, lang)
+
+    # ── YUKLAB OLISH (lock'siz -- parallel) ──
+    local_path = os.path.join(_user_temp_dir(uid), f"img_{message.id}_{int(time.time() * 1000)}.jpg")
+    ok = False
+    try:
         await message.download(file_name=local_path)
+        ok = True
+    except Exception as e:
+        _logger.warning("Rasm yuklab olinmadi (uid=%s): %s", uid, e)
+    finally:
+        recv["downloading"] = max(0, recv["downloading"] - 1)
+
+    if ok and collect_state.get(uid) is state and state["stage"] == "collecting":
+        state["items"][message.id] = local_path
+        # Sahifalar tartibi -- yuborilgan tartibda (xabar ID bo'yicha),
+        # parallel yuklash tugash tartibiga bog'liq bo'lmasin.
+        state["images"] = [state["items"][k] for k in sorted(state["items"])]
+        recv["accepted"] += 1
         size = pdf_utils.get_file_size(local_path)
-        # Statistika/pending yozuvlari FONDA (tartib bilan) -- foydalanuvchi
-        # Turso javobini kutib o'tirmaydi.
         database.run_in_background(database.record_image_sent, uid, size)
         database.run_in_background(database.add_pending_file, uid, local_path, size)
+        asyncio.create_task(_safe_delete(message))  # rasm chatdan tozalanadi
+    else:
+        _remove_file(local_path)  # xato yoki jarayon bekor qilingan
 
-        # Rasm chatdan DOIM tozalanadi (qabul bo'lgach) -- fonda
-        asyncio.create_task(_safe_delete(message))
-
-        state = collect_state.get(uid)
-        if not state:
-            status_msg = await client.send_message(
-                message.chat.id, await _collecting_status_text(lang, uid, 1),
-                reply_markup=keyboards.collecting_kb(lang),
-            )
-            collect_state[uid] = {
-                "images": [local_path],
-                "status_chat_id": message.chat.id,
-                "status_msg_id": status_msg.id,
-                "stage": "collecting",
-                "token": 0,
-            }
-        else:
-            state["images"].append(local_path)
-            asyncio.create_task(_debounced_update_status(client, uid, lang))
-
-        token = _bump_token(uid)
-
-    asyncio.create_task(_idle_watchdog(client, uid, token, config.COLLECT_IDLE_TIMEOUT))
+    await _check_recv_complete(client, uid, state, lang, max_images)
 
 
 async def _collect_done_cb(client: Client, call: CallbackQuery):
@@ -362,6 +518,8 @@ async def _collect_done_cb(client: Client, call: CallbackQuery):
     await call.answer()
     if not state or state["stage"] != "collecting" or not state["images"]:
         return
+    if _recv.get(uid, {}).get("downloading", 0) > 0:
+        return  # yangi rasmlar hali yuklanmoqda -- tugagach yangi "Tayyor" chiqadi
     await _start_build_and_ask_filename(client, uid, auto_timeout=False)
 
 
@@ -452,6 +610,7 @@ async def _finish_build(client: Client, uid: int, filename: str | None):
     kutamiz (odatda foydalanuvchi yozib ulgurgan vaqtda allaqachon
     tayyor bo'ladi, shuning uchun amalda kutish deyarli bo'lmaydi);
     tugagan bo'lsa -- faylni darhol kerakli nomga o'tkazib yuboramiz."""
+    _gate_cache.pop(uid, None)  # PDF yaratilgach limit qayta tekshirilsin
     state = collect_state.pop(uid, None)
     if not state:
         return
