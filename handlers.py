@@ -58,6 +58,22 @@ def _get_photo_lock(uid: int) -> asyncio.Lock:
     return lock
 
 
+# Bir foydalanuvchi bir vaqtda bir nechta PDF yuborsa (masalan albom
+# sifatida 2-10 ta birga), ularning HAMMASI deyarli bir vaqtda kelib
+# tushadi -- shuning uchun "band" tekshiruvi ham lock bilan
+# himoyalanishi kerak (aks holda ikkinchisi ham "bo'sh" deb o'ylab
+# qoladi va parallel ishga tushadi).
+_document_locks: dict[int, asyncio.Lock] = {}
+
+
+def _get_document_lock(uid: int) -> asyncio.Lock:
+    lock = _document_locks.get(uid)
+    if lock is None:
+        lock = asyncio.Lock()
+        _document_locks[uid] = lock
+    return lock
+
+
 async def _auto_delete_later(client: Client, chat_id: int, message_id: int, delay: float):
     """Ogohlantirish xabarlari ("band" degan xabarlar) chatda abadiy
     qolib ketmasligi uchun -- bir necha soniyadan keyin o'zi o'chadi."""
@@ -231,6 +247,20 @@ async def _handle_photo(client: Client, message: Message):
     if user and user.get("is_banned"):
         return
     if await check_force_sub(client, uid, message.chat.id):
+        return
+
+    # PDF YARATISH limiti tugagan bo'lsa -- rasm UMUMAN qabul
+    # qilinmaydi (chatda qoldiriladi), hatto to'plam allaqachon
+    # boshlangan bo'lsa ham. Bu "Tayyor" bosilgandan keyin emas, HAR
+    # BIR rasm yuborilganda tekshiriladi -- aks holda limit kun
+    # davomida tugab qolsa, oldin boshlangan to'plamga qo'shilgan
+    # rasmlar baribir PDF qilinib yuborilib ketardi.
+    allowed, used, limit = await database.can_create_pdf(uid)
+    if not allowed:
+        await message.reply(
+            t(lang, "limit_create_reached", used=used, limit=limit) + "\n\n" + t(lang, "premium_ad"),
+            reply_markup=keyboards.premium_ad_kb(lang),
+        )
         return
 
     # Albumdagi rasmlar bir-biridan millisekundlar farqi bilan kelishi
@@ -529,17 +559,26 @@ async def _handle_document(client: Client, message: Message):
         asyncio.create_task(_auto_delete_later(client, warn.chat.id, warn.id, 6))
         return
 
-    if uid in _reading_pdf_users:
-        warn = await client.send_message(message.chat.id, t(lang, "busy_reading_pdf"))
-        asyncio.create_task(_auto_delete_later(client, warn.chat.id, warn.id, 6))
-        return
+    async with _get_document_lock(uid):
+        if uid in _reading_pdf_users:
+            # Bir vaqtda (masalan albom sifatida) bir nechtasi kelgan --
+            # faqat BIRINCHISI qabul qilinadi, qolganlari rad etiladi va
+            # CHATDA QOLDIRILADI (foydalanuvchi ularni birma-bir, avvalgi
+            # PDF o'qilib bo'lgach, qayta yuborishi kerak).
+            warn = await message.reply(t(lang, "busy_reading_pdf"))
+            asyncio.create_task(_auto_delete_later(client, warn.chat.id, warn.id, 8))
+            return
 
-    allowed, used, limit = await database.can_read_pdf(uid)
-    if not allowed:
-        await message.reply(t(lang, "limit_read_reached", used=used, limit=limit))
-        return
+        allowed, used, limit = await database.can_read_pdf(uid)
+        if not allowed:
+            await message.reply(
+                t(lang, "limit_read_reached", used=used, limit=limit) + "\n\n" + t(lang, "premium_ad"),
+                reply_markup=keyboards.premium_ad_kb(lang),
+            )
+            return
 
-    _reading_pdf_users.add(uid)
+        _reading_pdf_users.add(uid)
+
     try:
         await _process_incoming_pdf(client, message, uid, lang)
     finally:
@@ -815,6 +854,13 @@ def _register_user_handlers(client: Client) -> None:
     async def menu_language(c, m):
         lang = await _lang(m.from_user.id)
         await m.reply(t(lang, "choose_language"), reply_markup=keyboards.language_kb())
+
+    @client.on_message(filters.private & filters.text & filters.create(
+        lambda _, __, m: m.text in (t("uz", "menu_btn_premium"), t("en", "menu_btn_premium"))
+    ))
+    async def menu_premium(c, m):
+        lang = await _lang(m.from_user.id)
+        await m.reply(t(lang, "premium_ad"), reply_markup=keyboards.premium_ad_kb(lang))
 
     @client.on_message(filters.private & filters.text & filters.create(
         lambda _, __, m: m.text in (t("uz", "menu_btn_contact_admin"), t("en", "menu_btn_contact_admin"))

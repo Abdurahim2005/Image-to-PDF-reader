@@ -16,7 +16,7 @@ def main_menu_kb(lang: str, is_admin: bool = False) -> ReplyKeyboardMarkup:
     rows = [
         [KeyboardButton(t(lang, "menu_btn_profile")), KeyboardButton(t(lang, "menu_btn_stats"))],
         [KeyboardButton(t(lang, "menu_btn_contact_admin")), KeyboardButton(t(lang, "menu_btn_language"))],
-        [KeyboardButton(t(lang, "menu_btn_info"))],
+        [KeyboardButton(t(lang, "menu_btn_info")), KeyboardButton(t(lang, "menu_btn_premium"))],
     ]
     if is_admin:
         rows.append([KeyboardButton(t(lang, "menu_btn_admin_panel"))])

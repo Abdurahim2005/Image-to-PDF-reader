@@ -1,7 +1,19 @@
 # ════════════════════════════════════════════════════════════
-#  BAZA QATLAMI -- Turso (libSQL) ustida ishlaydi, libsql_client
-#  orqali ASINXRON so'rovlar yuboradi (pyrogram ham asinxron
-#  bo'lgani uchun bu eng mos variant -- hech narsa bloklanmaydi).
+#  BAZA QATLAMI -- Turso (libSQL) ustida ishlaydi.
+#
+#  TEZLIK UCHUN: `libsql_experimental` (EMBEDDED REPLICA rejimi)
+#  ishlatiladi -- bu HAR BIR so'rovni internet orqali Turso serveriga
+#  yubormaydi, balki LOKAL faylga (`/tmp/pdfbot_replica.db`) yozadi va
+#  o'qiydi (millisekundlar), fon vazifasi esa muntazam ravishda shu
+#  lokal nusxani Turso bilan sinxronlaydi (`conn.sync()`). Natijada
+#  har bir so'rov tarmoq kechikishisiz, deyarli zudlik bilan ishlaydi
+#  -- xuddi oddiy SQLite kabi.
+#
+#  `libsql_experimental` SINXRON kutubxona (async emas), shuning uchun
+#  `_ThreadedClient.execute()` har bir chaqiruvni alohida thread'da
+#  (`asyncio.to_thread`) bajaradi -- bu orqali butun bot asinxron
+#  (pyrogram) bilan muammosiz ishlayveradi, va `await c.execute(...)`
+#  chaqiruvlari butun faylda O'ZGARMAYDI.
 #
 #  Jadvallar:
 #   users            -- har bir foydalanuvchi + statistikasi
@@ -16,101 +28,153 @@
 # ════════════════════════════════════════════════════════════
 import asyncio
 import logging
+import threading
 import time
 
-import libsql_client
+import libsql_experimental as libsql
 
 import config
 
 logger = logging.getLogger(__name__)
 
-_client: "_RetryingClient | None" = None
+_LOCAL_DB_PATH = "/tmp/pdfbot_replica.db"
 
-# Vaqtinchalik tarmoq xatolari -- Turso bilan HTTP ulanish ora-sirada
-# uzilib qolishi (bu internetning odatiy holati, Turso tomonidagi xato
-# emas) -- shunday paytda so'rovni darhol xato deb qaytarish o'rniga,
-# bir necha marta qayta urinamiz.
-_RETRYABLE_EXCEPTIONS = (
-    ConnectionError,
-    TimeoutError,
-    OSError,
-)
+_raw_conn = None
+_conn_lock = threading.Lock()  # libsql_experimental connection THREAD-SAFE emas
 
 
-class _RetryingClient:
-    """`libsql_client.Client`ni o'rab oladi -- `execute()` chaqirilganda,
-    vaqtinchalik tarmoq xatosi (masalan `ServerDisconnectedError`,
-    ulanish uzilishi) yuzaga kelsa, darhol xato ko'tarish o'rniga bir
-    necha marta (qisqa kutish bilan) qayta urinadi. Boshqa barcha
-    metodlar (bo'lsa) to'g'ridan-to'g'ri asl klientga yo'naltiriladi."""
+def _get_raw_conn():
+    """Lokal (embedded replica) ulanishni bir martalik yaratadi.
+    DIQQAT: bu funksiya faqat worker thread ichidan chaqiriladi
+    (`asyncio.to_thread` orqali), asosiy event loop'da emas."""
+    global _raw_conn
+    if _raw_conn is None:
+        _raw_conn = libsql.connect(
+            _LOCAL_DB_PATH,
+            sync_url=config.TURSO_DATABASE_URL,
+            auth_token=config.TURSO_AUTH_TOKEN,
+        )
+        _raw_conn.sync()
+        logger.info("Turso embedded replica ulandi: %s", _LOCAL_DB_PATH)
+    return _raw_conn
 
-    def __init__(self, raw: libsql_client.Client):
-        self._raw = raw
 
-    async def execute(self, *args, **kwargs):
+class _ThreadedResult:
+    """`libsql_experimental`ning cursor-natijasini `libsql_client`
+    bilan BIR XIL interfeysga keltiradi (`.rows`, `.columns`) --
+    shunda butun database.py fayli O'ZGARMAYDI."""
+
+    __slots__ = ("rows", "columns")
+
+    def __init__(self, rows, columns):
+        self.rows = rows
+        self.columns = columns
+
+
+def _execute_sync(sql: str, params: list, return_last_rowid: bool = False):
+    """Worker thread ichida chaqiriladi -- haqiqiy sinxron SQL
+    so'rovni bajaradi. Lock bilan himoyalangan, chunki bir connection
+    bir vaqtda faqat bitta so'rovni bajarishi kerak.
+
+    `return_last_rowid=True` bo'lsa -- INSERT'dan keyin, SHU LOCK
+    ICHIDA (boshqa yozish orada kirib ketmasligi uchun)
+    `last_insert_rowid()`ni ham so'rab, natija sifatida qaytaradi."""
+    with _conn_lock:
+        conn = _get_raw_conn()
+        cur = conn.execute(sql, params)
+        try:
+            rows = cur.fetchall()
+        except Exception:
+            rows = []
+        columns = [d[0] for d in cur.description] if cur.description else []
+        # YOZISH so'rovlari (INSERT/UPDATE/DELETE) uchun darhol commit
+        # qilamiz -- libsql_experimental avtomatik committ qilmaydi.
+        try:
+            conn.commit()
+        except Exception:
+            pass
+        if return_last_rowid:
+            rowid_cur = conn.execute("SELECT last_insert_rowid()")
+            rows = rowid_cur.fetchall()
+            columns = ["last_insert_rowid()"]
+        return _ThreadedResult(rows, columns)
+
+
+class _ThreadedClient:
+    """`libsql_client.Client`ning asinxron `execute()` interfeysini
+    taqlid qiladi, lekin orqada HAQIQIY SINXRON `libsql_experimental`
+    ulanishini `asyncio.to_thread` orqali chaqiradi. Shu orqali butun
+    loyihadagi `await c.execute(sql, params)` chaqiruvlari o'zgarishsiz
+    qoladi, lekin har bir so'rov endi tarmoq orqali EMAS, balki LOKAL
+    fayldan javob oladi -- bir necha millisekund ichida."""
+
+    async def execute(self, sql: str, params: list | None = None, return_last_rowid: bool = False):
+        params = params or []
         last_exc = None
         for attempt in range(3):
             try:
-                return await self._raw.execute(*args, **kwargs)
-            except _RETRYABLE_EXCEPTIONS as e:
-                last_exc = e
-                logger.warning("Turso so'rovi muvaqqat xato berdi (urinish %d/3): %s", attempt + 1, e)
-                await asyncio.sleep(0.5 * (attempt + 1))
+                return await asyncio.to_thread(_execute_sync, sql, params, return_last_rowid)
             except Exception as e:
-                # aiohttp'ning ServerDisconnectedError kabi ba'zi
-                # xatolari to'g'ridan-to'g'ri yuqoridagi tuplarga
-                # kirmasligi mumkin -- shuning uchun xato nomi bo'yicha
-                # ham tekshiramiz (zaxira usul).
-                if "Disconnected" in type(e).__name__ or "disconnected" in str(e).lower():
-                    last_exc = e
-                    logger.warning("Turso ulanishi uzildi (urinish %d/3): %s", attempt + 1, e)
-                    await asyncio.sleep(0.5 * (attempt + 1))
-                    continue
-                raise
+                last_exc = e
+                logger.warning("Baza so'rovi xato berdi (urinish %d/3): %s", attempt + 1, e)
+                await asyncio.sleep(0.3 * (attempt + 1))
+                # Ulanish buzilgan bo'lishi mumkin -- qayta yaratishga
+                # majburlaymiz (keyingi urinishda _get_raw_conn yangi
+                # ulanish ochadi).
+                global _raw_conn
+                with _conn_lock:
+                    _raw_conn = None
         raise last_exc
 
-    def __getattr__(self, name):
-        return getattr(self._raw, name)
+
+async def _sync_loop():
+    """Fon vazifasi -- har necha soniyada lokal nusxani Turso bilan
+    sinxronlaydi (yozilgan o'zgarishlarni serverga yuboradi, serverda
+    boshqa joydan kelgan o'zgarishlarni oladi). Bu bo'lmasa, lokal
+    yozishlar hech qachon Turso'ga yetib bormaydi."""
+    while True:
+        await asyncio.sleep(5)
+        try:
+            await asyncio.to_thread(_sync_now)
+        except Exception as e:
+            logger.warning("Turso sync xato berdi: %s", e)
 
 
-def _http_url(url: str) -> str:
-    """`libsql_client` ikki transportni qo'llab-quvvatlaydi: WebSocket
-    (sxema `libsql://` yoki `wss://`) va HTTP (sxema `https://`).
-    Ba'zi Turso serverlari/hududlarida WebSocket handshake 400 xato
-    bilan rad etilishi mumkin -- shuning uchun BARQARORROQ bo'lgan
-    HTTP transportini MAJBURAN ishlatamiz: `libsql://...` -> `https://...`."""
-    if url.startswith("libsql://"):
-        return "https://" + url[len("libsql://"):]
-    if url.startswith("wss://"):
-        return "https://" + url[len("wss://"):]
-    return url
+def _sync_now():
+    with _conn_lock:
+        if _raw_conn is not None:
+            _raw_conn.sync()
 
 
-def get_client() -> "_RetryingClient":
-    """DIQQAT: `create_client()` (sync emas!) -- bu HAQIQIY asinxron
-    klient qaytaradi, uning `execute()` metodi coroutine bo'lib,
-    `await` bilan chaqirilishi kerak. Butun bot asinxron (pyrogram)
-    bo'lgani uchun aynan shu klient kerak -- `create_client_sync()`
-    esa SYNC klient qaytaradi va uning natijasini `await` qilishga
-    urinish `TypeError: object ResultSet can't be used in 'await'
-    expression` xatosini beradi.
+_sync_task: asyncio.Task | None = None
 
-    Qaytariladigan klient `_RetryingClient` bilan o'ralgan -- vaqtinchalik
-    tarmoq uzilishlarida avtomatik qayta urinadi."""
+
+def start_background_sync() -> None:
+    """main.py chaqiradi -- bot ishga tushganda fon-sinxronlashni
+    boshlaydi."""
+    global _sync_task
+    if _sync_task is None:
+        _sync_task = asyncio.create_task(_sync_loop())
+
+
+_client: "_ThreadedClient | None" = None
+
+
+def get_client() -> "_ThreadedClient":
     global _client
     if _client is None:
-        raw = libsql_client.create_client(
-            url=_http_url(config.TURSO_DATABASE_URL),
-            auth_token=config.TURSO_AUTH_TOKEN,
-        )
-        _client = _RetryingClient(raw)
+        _client = _ThreadedClient()
     return _client
 
 
 async def ping_database() -> bool:
-    """Admin panel -- 'Bazani tekshirish' tugmasi uchun. Turso bilan
-    ulanish ishlayotganini tekshirish uchun eng oddiy so'rov yuboradi."""
+    """Admin panel -- 'Bazani tekshirish' tugmasi uchun. Lokal
+    so'rovning o'zi kam narsa bildiradi (lokal fayl har doim ishlaydi),
+    shuning uchun aynan TURSO SERVERI bilan ulanishni tekshirish uchun
+    `sync()`ni ham chaqiramiz -- agar server bilan ulanish bo'lmasa,
+    bu xato beradi."""
     try:
+        await asyncio.to_thread(_sync_now)
         c = get_client()
         await c.execute("SELECT 1")
         return True
@@ -598,8 +662,9 @@ async def add_pending_file(telegram_id: int, file_path: str, size_bytes: int) ->
     c = get_client()
     res = await c.execute(
         "INSERT INTO pending_files (telegram_id, file_path, size_bytes, created_at) "
-        "VALUES (?, ?, ?, ?) RETURNING id",
+        "VALUES (?, ?, ?, ?)",
         [telegram_id, file_path, size_bytes, _now()],
+        return_last_rowid=True,
     )
     return res.rows[0][0]
 

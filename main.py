@@ -48,6 +48,7 @@ async def _startup():
 
     handlers.init(app)
     admin_panel.register(app)
+    database.start_background_sync()
 
     logger.info("Bot ishga tushdi: @%s", me.username)
 
