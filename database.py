@@ -81,7 +81,7 @@ def _execute_sync(sql: str, params: list, return_last_rowid: bool = False):
     `last_insert_rowid()`ni ham so'rab, natija sifatida qaytaradi."""
     with _conn_lock:
         conn = _get_raw_conn()
-        cur = conn.execute(sql, params)
+        cur = conn.execute(sql, tuple(params or ()))
         try:
             rows = cur.fetchall()
         except Exception:
