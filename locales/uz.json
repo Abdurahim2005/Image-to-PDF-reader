@@ -35,14 +35,15 @@
   "busy_building": "⚠️ PDF hozir tayyorlanmoqda, biroz kuting — tayyor bo'lgach yangi amal bajarishingiz mumkin.",
   "busy_reading_pdf": "⚠️ Avvalgi PDF hali o'qilmoqda, iltimos kuting — tugagach yangi fayl yuborishingiz mumkin.",
 
-  "limit_create_reached": "⚠️ Kunlik PDF yaratish limitingizga yetdingiz ({used}/{limit}). Ertaga qayta urinib ko'ring.",
-  "limit_read_reached": "⚠️ Kunlik PDF o'qish limitingizga yetdingiz ({used}/{limit}). Ertaga qayta urinib ko'ring.",
+  "limit_create_reached": "⚠️ Kunlik PDF yaratish limitingizga yetdingiz ({used}/{limit}).\n\n🕛 Limitingiz ertaga soat 00:00'da (Toshkent vaqti) avtomatik tiklanadi.",
+  "limit_read_reached": "⚠️ Kunlik PDF o'qish limitingizga yetdingiz ({used}/{limit}).\n\n🕛 Limitingiz ertaga soat 00:00'da (Toshkent vaqti) avtomatik tiklanadi.",
   "max_images_reached": "⚠️ Bir PDF uchun maksimal rasm soniga yetdingiz ({max} ta). \"✅ Tayyor\" tugmasini bosing.",
 
   "limit_status_after_create": "📊 Bugungi PDF yaratish limitingiz: {used}/{limit}\n🔋 Yana {left} ta imkoningiz bor.",
   "limit_status_after_read": "📊 Bugungi PDF o'qish limitingiz: {used}/{limit}\n🔋 Yana {left} ta imkoningiz bor.",
-  "premium_ad": "🌟 Kunlik limitingiz tugadi!\n\nPremium tarifga o'tib, limitsiz PDF yarating va o'qing, shuningdek tezroq ishlov berish va boshqa imkoniyatlardan foydalaning!\n\n_(Premium funksiyasi tez kunda ishga tushadi)_",
+  "premium_ad": "🌟 Ertagacha kutishni xohlamasangiz — Premium tarifga o'ting: limitsiz PDF yarating va o'qing, tezroq ishlov berish va boshqa imkoniyatlardan foydalaning!\n\n_(Premium funksiyasi tez kunda ishga tushadi)_",
   "premium_btn_test": "🌟 Premium haqida (test)",
+  "menu_btn_premium": "🌟 Premium",
   "premium_info_popup": "🌟 Premium tez kunda ishga tushadi — limitsiz PDF, tezroq ishlov va boshqa imkoniyatlar bilan!",
 
   "menu_btn_language": "🌐 Til / Language",

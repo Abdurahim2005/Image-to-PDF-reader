@@ -35,14 +35,15 @@
   "busy_building": "⚠️ The PDF is being built right now, please wait — you can start a new action once it's done.",
   "busy_reading_pdf": "⚠️ The previous PDF is still being processed, please wait — you can send a new file once it's done.",
 
-  "limit_create_reached": "⚠️ You've reached your daily PDF creation limit ({used}/{limit}). Try again tomorrow.",
-  "limit_read_reached": "⚠️ You've reached your daily PDF reading limit ({used}/{limit}). Try again tomorrow.",
+  "limit_create_reached": "⚠️ You've reached your daily PDF creation limit ({used}/{limit}).\n\n🕛 Your limit resets automatically tomorrow at 00:00 (Tashkent time).",
+  "limit_read_reached": "⚠️ You've reached your daily PDF reading limit ({used}/{limit}).\n\n🕛 Your limit resets automatically tomorrow at 00:00 (Tashkent time).",
   "max_images_reached": "⚠️ You've reached the max number of images for one PDF ({max}). Press \"✅ Done\".",
 
   "limit_status_after_create": "📊 Today's PDF creation limit: {used}/{limit}\n🔋 {left} left.",
   "limit_status_after_read": "📊 Today's PDF reading limit: {used}/{limit}\n🔋 {left} left.",
-  "premium_ad": "🌟 Your daily limit is used up!\n\nUpgrade to Premium for unlimited PDF creation and reading, faster processing, and more!\n\n_(Premium is launching soon)_",
+  "premium_ad": "🌟 Don't want to wait until tomorrow? Upgrade to Premium: unlimited PDF creation and reading, faster processing, and more!\n\n_(Premium is launching soon)_",
   "premium_btn_test": "🌟 About Premium (test)",
+  "menu_btn_premium": "🌟 Premium",
   "premium_info_popup": "🌟 Premium is launching soon — unlimited PDFs, faster processing, and more!",
 
   "menu_btn_language": "🌐 Til / Language",
