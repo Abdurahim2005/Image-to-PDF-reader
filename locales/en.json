@@ -20,6 +20,7 @@
 
   "collecting_status": "📸 Images received: {count}{max_suffix}\n\nYou can send more, or press \"✅ Done\".\n⏱ If no new image arrives within 30 seconds — the PDF is created automatically.",
   "collecting_status_max_suffix": "/{max}",
+  "receiving_images": "📥 Receiving images... please wait.",
   "collecting_done_btn": "✅ Done",
   "collecting_cancel_btn": "❌ Cancel",
   "ask_filename": "✏️ Type a name for the PDF (within 30 seconds):\n\nIf you don't, a default name will be used.",

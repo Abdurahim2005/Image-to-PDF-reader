@@ -20,6 +20,7 @@
 
   "collecting_status": "📸 Rasmlar qabul qilindi: {count}{max_suffix}\n\nYana rasm yuborishingiz mumkin, yoki \"✅ Tayyor\" tugmasini bosing.\n⏱ 30 soniya ichida yangi rasm kelmasa — avtomatik PDF qilinadi.",
   "collecting_status_max_suffix": "/{max}",
+  "receiving_images": "📥 Rasmlar qabul qilinmoqda... iltimos, kuting.",
   "collecting_done_btn": "✅ Tayyor",
   "collecting_cancel_btn": "❌ Bekor qilish",
   "ask_filename": "✏️ PDF uchun nom yozing (30 soniya ichida):\n\nAgar nom yozmasangiz — avtomatik ism qo'yiladi.",
