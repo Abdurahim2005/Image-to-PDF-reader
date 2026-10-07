@@ -28,6 +28,7 @@
 # ════════════════════════════════════════════════════════════
 import asyncio
 import logging
+import os
 import threading
 import time
 
@@ -127,13 +128,52 @@ class _ThreadedClient:
         raise last_exc
 
 
+async def _add_column_if_missing(c, table: str, column: str, ddl: str):
+    """Ustun yo'q bo'lsagina ALTER TABLE qiladi (PRAGMA orqali tekshiradi),
+    shunda 'duplicate column name' xatosi va keraksiz qayta urinishlar chiqmaydi."""
+    res = await c.execute(f"PRAGMA table_info({table})")
+    existing = {row[1] for row in res.rows}
+    if column not in existing:
+        await c.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+
+
+# ════════════════════════════════════════════════════════════
+#  FON YOZUV NAVBATI -- statistika kabi "kutish shart emas"
+#  yozuvlar foydalanuvchi javobini sekinlashtirmasligi uchun.
+#  Tartib saqlanadi (bitta worker, ketma-ket).
+# ════════════════════════════════════════════════════════════
+_bg_queue: "asyncio.Queue | None" = None
+_bg_task: "asyncio.Task | None" = None
+
+
+async def _bg_worker():
+    while True:
+        fn, args = await _bg_queue.get()
+        try:
+            await fn(*args)
+        except Exception as e:
+            logger.warning("Fon yozuvi xato berdi (%s): %s", getattr(fn, "__name__", fn), e)
+        finally:
+            _bg_queue.task_done()
+
+
+def run_in_background(fn, *args) -> None:
+    """Async funksiyani navbatga qo'yadi va DARHOL qaytadi (kutmaydi)."""
+    global _bg_queue, _bg_task
+    if _bg_queue is None:
+        _bg_queue = asyncio.Queue()
+        _bg_task = asyncio.create_task(_bg_worker())
+    _bg_queue.put_nowait((fn, args))
+
+
 async def _sync_loop():
     """Fon vazifasi -- har necha soniyada lokal nusxani Turso bilan
     sinxronlaydi (yozilgan o'zgarishlarni serverga yuboradi, serverda
     boshqa joydan kelgan o'zgarishlarni oladi). Bu bo'lmasa, lokal
     yozishlar hech qachon Turso'ga yetib bormaydi."""
+    interval = int(os.environ.get("SYNC_INTERVAL", "30"))
     while True:
-        await asyncio.sleep(5)
+        await asyncio.sleep(interval)
         try:
             await asyncio.to_thread(_sync_now)
         except Exception as e:
@@ -221,10 +261,7 @@ async def init_db() -> None:
     # Eski bazalarda `max_images_per_pdf` ustuni bo'lmasligi mumkin --
     # `CREATE TABLE IF NOT EXISTS` mavjud jadvalni o'zgartirmaydi,
     # shuning uchun bir martalik ALTER TABLE orqali qo'shamiz.
-    try:
-        await c.execute("ALTER TABLE users ADD COLUMN max_images_per_pdf INTEGER DEFAULT 0")
-    except Exception:
-        pass  # ustun allaqachon mavjud
+    await _add_column_if_missing(c, "users", "max_images_per_pdf", "INTEGER DEFAULT 0")
 
     await c.execute("""
         CREATE TABLE IF NOT EXISTS pending_files (
@@ -246,10 +283,7 @@ async def init_db() -> None:
             bytes_processed INTEGER DEFAULT 0
         )
     """)
-    try:
-        await c.execute("ALTER TABLE daily_stats ADD COLUMN bytes_processed INTEGER DEFAULT 0")
-    except Exception:
-        pass
+    await _add_column_if_missing(c, "daily_stats", "bytes_processed", "INTEGER DEFAULT 0")
 
     await c.execute("""
         CREATE TABLE IF NOT EXISTS required_channels (
@@ -449,8 +483,12 @@ async def record_image_sent(telegram_id: int, size_bytes: int) -> None:
         "WHERE telegram_id = ?",
         [size_bytes, telegram_id],
     )
-    await bump_daily_stat("images_sent")
-    await bump_daily_stat("bytes_processed", by=size_bytes)
+    await c.execute(
+        "INSERT INTO daily_stats (day, images_sent, bytes_processed) VALUES (?, 1, ?) "
+        "ON CONFLICT(day) DO UPDATE SET images_sent = images_sent + 1, "
+        "bytes_processed = bytes_processed + excluded.bytes_processed",
+        [_today(), size_bytes],
+    )
 
 
 # ════════════════════════════════════════════════════════════
@@ -635,7 +673,14 @@ async def has_joined_channel(channel_row_id: int, telegram_id: int) -> bool:
     return len(res.rows) > 0
 
 
+_joined_cache: set = set()
+
+
 async def record_channel_join(channel_row_id: int, telegram_id: int) -> None:
+    key = (channel_row_id, telegram_id)
+    if key in _joined_cache:
+        return  # allaqachon yozilgan -- har rasmda qayta yozmaymiz
+    _joined_cache.add(key)
     c = get_client()
     await c.execute(
         "INSERT INTO channel_joins (channel_row_id, telegram_id, joined_at) VALUES (?, ?, ?) "

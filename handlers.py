@@ -111,6 +111,12 @@ def init(client: Client) -> None:
 # ════════════════════════════════════════════════════════════
 #  MAJBURIY OBUNA
 # ════════════════════════════════════════════════════════════
+# A'zolik tekshiruvi natijasi (faqat "a'zo" natijasi) qisqa muddat
+# eslab qolinadi -- har rasmda Telegram'ga so'rov yubormaslik uchun.
+_member_cache: dict = {}
+_MEMBER_TTL = 120  # soniya
+
+
 async def _check_tg_membership(client: Client, uid: int, channel_id: str) -> bool:
     try:
         member = await client.get_chat_member(channel_id, uid)
@@ -144,7 +150,10 @@ async def check_force_sub(client: Client, uid: int, chat_id: int, send_message: 
     tg_not_joined = []
     for ch in tg_channels:
         ref, _ = keyboards.channel_ref_and_url(str(ch["channel_id"]))
+        if _member_cache.get((uid, ref), 0) > time.monotonic():
+            continue  # yaqinda tekshirilgan -- a'zo
         if await _check_tg_membership(client, uid, ref):
+            _member_cache[(uid, ref)] = time.monotonic() + _MEMBER_TTL
             await database.record_channel_join(ch["id"], uid)
         else:
             tg_not_joined.append(ch)
@@ -199,6 +208,19 @@ async def _collecting_status_text(lang: str, uid: int, count: int) -> str:
     return t(lang, "collecting_status", count=count, max_suffix=max_suffix)
 
 
+async def _debounced_update_status(client: Client, uid: int, lang: str):
+    """Albomdagi 10 ta rasm uchun 10 marta emas, 1-2 marta tahrirlaydi."""
+    state = collect_state.get(uid)
+    if not state or state.get("status_pending"):
+        return
+    state["status_pending"] = True
+    await asyncio.sleep(0.7)
+    state = collect_state.get(uid)
+    if state:
+        state["status_pending"] = False
+    await _update_status(client, uid, lang)
+
+
 async def _update_status(client: Client, uid: int, lang: str):
     state = collect_state.get(uid)
     if not state:
@@ -237,6 +259,13 @@ def _bump_token(uid: int) -> int:
     state = collect_state[uid]
     state["token"] = state.get("token", 0) + 1
     return state["token"]
+
+
+async def _safe_delete(message: Message):
+    try:
+        await message.delete()
+    except Exception:
+        pass
 
 
 async def _handle_photo(client: Client, message: Message):
@@ -297,14 +326,13 @@ async def _handle_photo(client: Client, message: Message):
         local_path = os.path.join(temp_dir, f"img_{int(time.time() * 1000)}_{len(state['images']) if state else 0}.jpg")
         await message.download(file_name=local_path)
         size = pdf_utils.get_file_size(local_path)
-        await database.record_image_sent(uid, size)
-        await database.add_pending_file(uid, local_path, size)
+        # Statistika/pending yozuvlari FONDA (tartib bilan) -- foydalanuvchi
+        # Turso javobini kutib o'tirmaydi.
+        database.run_in_background(database.record_image_sent, uid, size)
+        database.run_in_background(database.add_pending_file, uid, local_path, size)
 
-        # Rasm chatdan DOIM tozalanadi (qabul bo'lgach)
-        try:
-            await message.delete()
-        except Exception:
-            pass
+        # Rasm chatdan DOIM tozalanadi (qabul bo'lgach) -- fonda
+        asyncio.create_task(_safe_delete(message))
 
         state = collect_state.get(uid)
         if not state:
@@ -321,7 +349,7 @@ async def _handle_photo(client: Client, message: Message):
             }
         else:
             state["images"].append(local_path)
-            await _update_status(client, uid, lang)
+            asyncio.create_task(_debounced_update_status(client, uid, lang))
 
         token = _bump_token(uid)
 

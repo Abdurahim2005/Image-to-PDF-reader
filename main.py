@@ -28,6 +28,9 @@ app = Client(
     api_id=config.API_ID,
     api_hash=config.API_HASH,
     bot_token=config.BOT_TOKEN,
+    # Standart qiymat 1 -- BARCHA foydalanuvchilarning yuklab olishlari
+    # bitta navbatda turardi. Parallel yuklashga ruxsat beramiz.
+    max_concurrent_transmissions=8,
 )
 
 
