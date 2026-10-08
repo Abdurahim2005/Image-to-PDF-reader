@@ -42,6 +42,7 @@ _LOCAL_DB_PATH = "/tmp/pdfbot_replica.db"
 
 _raw_conn = None
 _conn_lock = threading.Lock()  # libsql_experimental connection THREAD-SAFE emas
+_dirty_since_last_sync = False  # oxirgi sync'dan keyin yozish bo'lganmi
 
 
 def _get_raw_conn():
@@ -72,6 +73,9 @@ class _ThreadedResult:
         self.columns = columns
 
 
+_WRITE_PREFIXES = ("insert", "update", "delete", "create", "alter", "drop")
+
+
 def _execute_sync(sql: str, params: list, return_last_rowid: bool = False):
     """Worker thread ichida chaqiriladi -- haqiqiy sinxron SQL
     so'rovni bajaradi. Lock bilan himoyalangan, chunki bir connection
@@ -79,7 +83,12 @@ def _execute_sync(sql: str, params: list, return_last_rowid: bool = False):
 
     `return_last_rowid=True` bo'lsa -- INSERT'dan keyin, SHU LOCK
     ICHIDA (boshqa yozish orada kirib ketmasligi uchun)
-    `last_insert_rowid()`ni ham so'rab, natija sifatida qaytaradi."""
+    `last_insert_rowid()`ni ham so'rab, natija sifatida qaytaradi.
+
+    TEZLIK: faqat YOZISH so'rovlaridan (INSERT/UPDATE/DELETE/DDL)
+    keyin commit qilamiz -- oddiy SELECT'lar uchun commit() shart
+    emas va qo'shimcha disk-flush vaqtini oladi."""
+    is_write = sql.strip().lower().startswith(_WRITE_PREFIXES)
     with _conn_lock:
         conn = _get_raw_conn()
         cur = conn.execute(sql, tuple(params or ()))
@@ -88,12 +97,13 @@ def _execute_sync(sql: str, params: list, return_last_rowid: bool = False):
         except Exception:
             rows = []
         columns = [d[0] for d in cur.description] if cur.description else []
-        # YOZISH so'rovlari (INSERT/UPDATE/DELETE) uchun darhol commit
-        # qilamiz -- libsql_experimental avtomatik committ qilmaydi.
-        try:
-            conn.commit()
-        except Exception:
-            pass
+        if is_write:
+            try:
+                conn.commit()
+            except Exception:
+                pass
+            global _dirty_since_last_sync
+            _dirty_since_last_sync = True
         if return_last_rowid:
             rowid_cur = conn.execute("SELECT last_insert_rowid()")
             rows = rowid_cur.fetchall()
@@ -170,12 +180,22 @@ async def _sync_loop():
     """Fon vazifasi -- har necha soniyada lokal nusxani Turso bilan
     sinxronlaydi (yozilgan o'zgarishlarni serverga yuboradi, serverda
     boshqa joydan kelgan o'zgarishlarni oladi). Bu bo'lmasa, lokal
-    yozishlar hech qachon Turso'ga yetib bormaydi."""
-    interval = int(os.environ.get("SYNC_INTERVAL", "30"))
+    yozishlar hech qachon Turso'ga yetib bormaydi.
+
+    TEZLIK: `sync()` o'zi internet orqali ketadi va shu paytda BUTUN
+    baza (`_conn_lock`) band bo'lib qoladi -- shuning uchun: (1)
+    oraliqni kattalashtirdik (60s), (2) agar oxirgi sync'dan beri
+    HECH QANDAY yozish bo'lmagan bo'lsa -- umuman chaqirmaymiz (bu
+    holatda Turso bilan gaplashishning hojati yo'q)."""
+    interval = int(os.environ.get("SYNC_INTERVAL", "60"))
     while True:
         await asyncio.sleep(interval)
+        global _dirty_since_last_sync
+        if not _dirty_since_last_sync:
+            continue
         try:
             await asyncio.to_thread(_sync_now)
+            _dirty_since_last_sync = False
         except Exception as e:
             logger.warning("Turso sync xato berdi: %s", e)
 

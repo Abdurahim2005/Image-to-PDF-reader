@@ -320,18 +320,27 @@ async def _gate_compute(client: Client, uid: int, chat_id: int) -> dict:
     # (chatda qoldiriladi).
     allowed, used, limit = await database.can_create_pdf(uid)
     if not allowed:
-        try:
-            await client.send_message(
-                chat_id,
-                t(lang, "limit_create_reached", used=used, limit=limit) + "\n\n" + t(lang, "premium_ad"),
-                reply_markup=keyboards.premium_ad_kb(lang),
-            )
-        except Exception:
-            pass
+        await _send_limit_reached_then_ad(client, chat_id, lang, "limit_create_reached", used, limit)
         return {"ok": False}
 
     max_images = await database.get_max_images_per_pdf(uid)
     return {"ok": True, "lang": lang, "max_images": max_images}
+
+
+async def _send_limit_reached_then_ad(client: Client, chat_id: int, lang: str, key: str, used: int, limit: int):
+    """Avval LIMIT TUGAGANI haqida alohida, to'liq tushunarli xabar
+    yuboradi, bir oz kutib (foydalanuvchi uni o'qib ulgurishi uchun),
+    SO'NGRA premium reklamasini ALOHIDA xabar sifatida yuboradi --
+    ikkisi bir vaqtda "to'satdan" chiqib, chalkashtirmasligi uchun."""
+    try:
+        await client.send_message(chat_id, t(lang, key, used=used, limit=limit))
+    except Exception:
+        pass
+    await asyncio.sleep(1.2)
+    try:
+        await client.send_message(chat_id, t(lang, "premium_ad"), reply_markup=keyboards.premium_ad_kb(lang))
+    except Exception:
+        pass
 
 
 async def _gate(client: Client, uid: int, chat_id: int) -> dict:
@@ -509,6 +518,18 @@ async def _handle_photo(client: Client, message: Message):
     else:
         _remove_file(local_path)  # xato yoki jarayon bekor qilingan
 
+    # DEBOUNCE: bir nechta rasm ketma-ket (lekin albom sifatida emas,
+    # alohida xabarlar sifatida) tez-tez kelayotganda, bittasi
+    # yuklanib bo'lgach "downloading" vaqtincha 0'ga tushib qolishi
+    # mumkin -- navbatdagisi hali boshlanmagan bo'lsa. Shu daqiqada
+    # _check_recv_complete'ni DARHOL chaqirsak, u "batch tugadi" deb
+    # noto'g'ri xulosa chiqarib, ERTA yakuniy xabar yuborib yuboradi.
+    # Shuning uchun qisqa kechikish bilan tekshiramiz -- agar shu orada
+    # yana rasm kelib "downloading" qayta oshsa, bu chaqiruv o'zini
+    # avtomatik bekor qiladi (quyidagi tekshiruv orqali).
+    await asyncio.sleep(0.35)
+    if recv["downloading"] > 0:
+        return  # orada yana rasm boshlanib ketdi -- keyingi chaqiruv yakunlaydi
     await _check_recv_complete(client, uid, state, lang, max_images)
 
 
@@ -618,6 +639,16 @@ async def _finish_build(client: Client, uid: int, filename: str | None):
 
     build_task = state.get("build_task")
     tmp_output_path = state.get("tmp_output_path")
+
+    # Foydalanuvchi nomni tez yozgan bo'lsa, fon-qurish hali tugamagan
+    # bo'lishi mumkin -- ekranda hamon "PDF uchun nom yozing" turgan
+    # bo'ladi, bu chalkashtiradi. Shuning uchun DARHOL "tayyorlanmoqda"
+    # xabariga o'tkazamiz, keyin kutamiz.
+    try:
+        await client.edit_message_text(state["status_chat_id"], state["status_msg_id"], t(lang, "pdf_building"))
+    except Exception:
+        pass
+
     if build_task is None or tmp_output_path is None:
         # Ehtiyot chorasi -- odatda bo'lmaydi, lekin build boshlanmagan
         # bo'lsa ham PDF qurib yuboramiz.
@@ -758,10 +789,7 @@ async def _handle_document(client: Client, message: Message):
 
         allowed, used, limit = await database.can_read_pdf(uid)
         if not allowed:
-            await message.reply(
-                t(lang, "limit_read_reached", used=used, limit=limit) + "\n\n" + t(lang, "premium_ad"),
-                reply_markup=keyboards.premium_ad_kb(lang),
-            )
+            await _send_limit_reached_then_ad(client, message.chat.id, lang, "limit_read_reached", used, limit)
             return
 
         _reading_pdf_users.add(uid)
