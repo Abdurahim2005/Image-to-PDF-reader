@@ -25,12 +25,17 @@
 #   channel_joins    -- kim qaysi kanalga "obuna" deb belgilangan
 #   settings         -- global sozlamalar (limitlar)
 #   admin_messages   -- foydalanuvchi <-> admin xat almashinuvi bog'lash
+#   premium_users    -- faol Premium obunachilar (muddati bilan)
+#   cards            -- bank kartalar (UZS to'lov uchun)
+#   crypto_tokens / crypto_networks -- kripto token va tarmoq manzillari (USDT)
+#   premium_payments -- chek bilan yuborilgan to'lov so'rovlari (tarix ham)
 # ════════════════════════════════════════════════════════════
 import asyncio
 import logging
 import os
 import threading
 import time
+from datetime import datetime, timedelta
 
 import libsql_experimental as libsql
 
@@ -346,6 +351,69 @@ async def init_db() -> None:
         )
     """)
 
+    # ── PREMIUM sozlamalari (global `settings` jadvalida; 0 = cheksiz) ──
+    await _add_column_if_missing(c, "settings", "premium_create_limit", "INTEGER DEFAULT 0")
+    await _add_column_if_missing(c, "settings", "premium_read_limit", "INTEGER DEFAULT 0")
+    await _add_column_if_missing(c, "settings", "premium_max_images", "INTEGER DEFAULT 0")
+    await _add_column_if_missing(c, "settings", "premium_days", f"INTEGER DEFAULT {int(config.DEFAULT_PREMIUM_DAYS)}")
+    await _add_column_if_missing(c, "settings", "price_uzs", f"INTEGER DEFAULT {int(config.DEFAULT_PRICE_UZS)}")
+    await _add_column_if_missing(c, "settings", "price_usdt", f"REAL DEFAULT {float(config.DEFAULT_PRICE_USDT)}")
+
+    # expires_at: '' (bo'sh) = CHEKSIZ premium, aks holda "YYYY-MM-DD HH:MM:SS"
+    await c.execute("""
+        CREATE TABLE IF NOT EXISTS premium_users (
+            user_id     INTEGER PRIMARY KEY,
+            started_at  TEXT NOT NULL,
+            expires_at  TEXT DEFAULT ''
+        )
+    """)
+    await c.execute("""
+        CREATE TABLE IF NOT EXISTS cards (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            bank_name   TEXT NOT NULL,
+            card_number TEXT NOT NULL,
+            owner_name  TEXT NOT NULL,
+            is_active   INTEGER DEFAULT 1,
+            created_at  TEXT DEFAULT ''
+        )
+    """)
+    await c.execute("""
+        CREATE TABLE IF NOT EXISTS crypto_tokens (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            name      TEXT NOT NULL,
+            is_active INTEGER DEFAULT 1
+        )
+    """)
+    await c.execute("""
+        CREATE TABLE IF NOT EXISTS crypto_networks (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            token_id     INTEGER NOT NULL,
+            network_name TEXT NOT NULL,
+            address      TEXT NOT NULL,
+            is_active    INTEGER DEFAULT 1
+        )
+    """)
+    # plan_days -- to'lov so'rovi yaratilgan paytdagi premium muddati
+    # (0 = cheksiz): admin tasdiqlagunga qadar sozlama o'zgarsa ham,
+    # foydalanuvchi to'lagan shartlar bo'yicha beriladi.
+    await c.execute("""
+        CREATE TABLE IF NOT EXISTS premium_payments (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id          INTEGER NOT NULL,
+            method           TEXT NOT NULL,
+            method_detail    TEXT DEFAULT '',
+            amount           TEXT DEFAULT '',
+            currency         TEXT DEFAULT '',
+            receipt_file_id  TEXT DEFAULT '',
+            receipt_type     TEXT DEFAULT '',
+            plan_days        INTEGER DEFAULT 0,
+            status           TEXT DEFAULT 'pending',
+            created_at       TEXT DEFAULT '',
+            processed_at     TEXT DEFAULT '',
+            processed_by     INTEGER DEFAULT 0
+        )
+    """)
+
 
 # ════════════════════════════════════════════════════════════
 #  FOYDALANUVCHILAR
@@ -439,10 +507,28 @@ async def _reset_daily_counter_if_needed(telegram_id: int, field_count: str, fie
         )
 
 
+async def _daily_limit(telegram_id: int, user: dict | None, kind: str) -> int:
+    """`kind`: 'create' | 'read'. 0 = cheklovsiz.
+
+    Faol PREMIUM foydalanuvchi uchun admin belgilagan PREMIUM limit
+    (sozlamalardan, har safar yangidan o'qiladi -- admin o'zgartirsa
+    darhol hammaga ta'sir qiladi). Oddiy foydalanuvchi uchun -- o'z
+    qatoridagi (shaxsiy yoki global nusxalangan) kunlik limit."""
+    if await is_premium(telegram_id):
+        s = await get_settings()
+        return int(s.get(f"premium_{kind}_limit") or 0)
+    col = "daily_create_limit" if kind == "create" else "daily_read_limit"
+    return int((user or {}).get(col) or 0)
+
+
 async def get_max_images_per_pdf(telegram_id: int) -> int:
-    """0 = cheklovsiz. Foydalanuvchining SHAXSIY limiti bo'lsa (0'dan
+    """0 = cheklovsiz. Faol premium foydalanuvchi uchun -- premium
+    sozlamasi. Oddiy foydalanuvchining SHAXSIY limiti bo'lsa (0'dan
     katta) -- shu ishlatiladi; bo'lmasa global sozlamadagi standart
     qiymat qaytariladi."""
+    if await is_premium(telegram_id):
+        ps = await get_settings()
+        return int(ps.get("premium_max_images") or 0)
     user = await get_user(telegram_id)
     personal = (user or {}).get("max_images_per_pdf") or 0
     if personal > 0:
@@ -455,7 +541,7 @@ async def can_create_pdf(telegram_id: int) -> tuple[bool, int, int]:
     """Qaytaradi: (ruxsat_bor, bugungi_son, limit). limit=0 -- cheklovsiz."""
     await _reset_daily_counter_if_needed(telegram_id, "pdfs_created_today", "pdfs_created_date")
     user = await get_user(telegram_id)
-    limit = user.get("daily_create_limit") or 0
+    limit = await _daily_limit(telegram_id, user, "create")
     today_count = user.get("pdfs_created_today") or 0
     if limit <= 0:
         return True, today_count, 0
@@ -465,7 +551,7 @@ async def can_create_pdf(telegram_id: int) -> tuple[bool, int, int]:
 async def can_read_pdf(telegram_id: int) -> tuple[bool, int, int]:
     await _reset_daily_counter_if_needed(telegram_id, "pdfs_read_today", "pdfs_read_date")
     user = await get_user(telegram_id)
-    limit = user.get("daily_read_limit") or 0
+    limit = await _daily_limit(telegram_id, user, "read")
     today_count = user.get("pdfs_read_today") or 0
     if limit <= 0:
         return True, today_count, 0
@@ -788,3 +874,258 @@ async def get_user_for_admin_message(admin_msg_id: int) -> int | None:
         "SELECT telegram_id FROM admin_messages WHERE admin_msg_id = ?", [admin_msg_id]
     )
     return res.rows[0][0] if res.rows else None
+
+
+# ════════════════════════════════════════════════════════════
+#  PREMIUM -- obunachilar
+# ════════════════════════════════════════════════════════════
+_DT_FMT = "%Y-%m-%d %H:%M:%S"
+
+PREMIUM_SETTING_FIELDS = (
+    "premium_create_limit", "premium_read_limit", "premium_max_images",
+    "premium_days", "price_uzs", "price_usdt",
+)
+
+
+async def set_premium_setting(field: str, value) -> None:
+    """Premium sozlamasini (limit / muddat / narx) saqlaydi. Faqat
+    PREMIUM_SETTING_FIELDS ichidagi nomlar qabul qilinadi."""
+    if field not in PREMIUM_SETTING_FIELDS:
+        raise ValueError(f"Noma'lum premium sozlamasi: {field}")
+    c = get_client()
+    await c.execute(f"UPDATE settings SET {field} = ? WHERE id = 1", [value])
+
+
+async def get_premium(telegram_id: int) -> dict | None:
+    """FAOL premium bo'lsa {"started_at": str, "expires_at": str | None}
+    (None = cheksiz), aks holda None. Muddati o'tgan, lekin fon-vazifa
+    hali o'chirib ulgurmagan yozuv ham "faol emas" hisoblanadi."""
+    c = get_client()
+    res = await c.execute(
+        "SELECT started_at, expires_at FROM premium_users WHERE user_id = ?", [telegram_id]
+    )
+    if not res.rows:
+        return None
+    started_at, expires_at = res.rows[0]
+    if expires_at and expires_at <= _now():
+        return None
+    return {"started_at": started_at, "expires_at": expires_at or None}
+
+
+async def is_premium(telegram_id: int) -> bool:
+    return (await get_premium(telegram_id)) is not None
+
+
+async def apply_premium(telegram_id: int, days: int) -> str | None:
+    """Premium beradi. `days` <= 0 -- CHEKSIZ.
+    Foydalanuvchida faol premium bor bo'lsa, yangi muddat uning TUGASH
+    SANASI USTIGA qo'shiladi (to'langan kunlar yo'qolmaydi); cheksiz
+    premium cheklangan muddat bilan almashtirilmaydi.
+    Qaytaradi: yangi tugash sanasi ("YYYY-MM-DD HH:MM:SS") yoki None (cheksiz)."""
+    c = get_client()
+    current = await get_premium(telegram_id)
+    if days <= 0 or (current and current["expires_at"] is None):
+        expires = ""
+    else:
+        base = datetime.strptime(current["expires_at"], _DT_FMT) if current else datetime.now()
+        expires = (base + timedelta(days=int(days))).strftime(_DT_FMT)
+    started = current["started_at"] if current else _now()
+    await c.execute(
+        "INSERT INTO premium_users (user_id, started_at, expires_at) VALUES (?, ?, ?) "
+        "ON CONFLICT(user_id) DO UPDATE SET started_at = excluded.started_at, "
+        "expires_at = excluded.expires_at",
+        [telegram_id, started, expires],
+    )
+    return expires or None
+
+
+async def revoke_premium(telegram_id: int) -> bool:
+    """Premiumni olib tashlaydi. Qaytaradi: True -- yozuv bor edi."""
+    c = get_client()
+    res = await c.execute("SELECT 1 FROM premium_users WHERE user_id = ?", [telegram_id])
+    if not res.rows:
+        return False
+    await c.execute("DELETE FROM premium_users WHERE user_id = ?", [telegram_id])
+    return True
+
+
+async def expire_premium_users() -> list[int]:
+    """Muddati tugagan premium yozuvlarni o'chiradi va ularning
+    foydalanuvchi ID'larini qaytaradi (xabar yuborish uchun)."""
+    c = get_client()
+    now = _now()
+    res = await c.execute(
+        "SELECT user_id FROM premium_users WHERE expires_at != '' AND expires_at <= ?", [now]
+    )
+    ids = [r[0] for r in res.rows]
+    if ids:
+        await c.execute(
+            "DELETE FROM premium_users WHERE expires_at != '' AND expires_at <= ?", [now]
+        )
+    return ids
+
+
+async def count_premium_users() -> int:
+    c = get_client()
+    res = await c.execute(
+        "SELECT COUNT(*) FROM premium_users WHERE expires_at = '' OR expires_at > ?", [_now()]
+    )
+    return res.rows[0][0]
+
+
+async def list_premium_users(offset: int = 0, limit: int = 10) -> tuple[list[dict], int]:
+    """Faol obunachilar (eng yangi obuna bo'lganlar birinchi) --
+    (shu sahifadagilar, JAMI soni)."""
+    c = get_client()
+    now = _now()
+    total = await count_premium_users()
+    res = await c.execute(
+        "SELECT p.user_id AS telegram_id, p.started_at, p.expires_at, u.username, u.first_name "
+        "FROM premium_users p LEFT JOIN users u ON u.telegram_id = p.user_id "
+        "WHERE p.expires_at = '' OR p.expires_at > ? "
+        "ORDER BY p.started_at DESC, p.user_id DESC LIMIT ? OFFSET ?",
+        [now, limit, offset],
+    )
+    return [dict(zip(res.columns, r)) for r in res.rows], total
+
+
+# ════════════════════════════════════════════════════════════
+#  TO'LOV: BANK KARTALAR (UZS)
+# ════════════════════════════════════════════════════════════
+async def add_card(bank_name: str, card_number: str, owner_name: str) -> None:
+    c = get_client()
+    await c.execute(
+        "INSERT INTO cards (bank_name, card_number, owner_name, is_active, created_at) VALUES (?, ?, ?, 1, ?)",
+        [bank_name, card_number, owner_name, _now()],
+    )
+
+
+async def list_cards() -> list[dict]:
+    c = get_client()
+    res = await c.execute("SELECT * FROM cards WHERE is_active = 1 ORDER BY id ASC")
+    return [dict(zip(res.columns, r)) for r in res.rows]
+
+
+async def get_card(card_id: int) -> dict | None:
+    c = get_client()
+    res = await c.execute("SELECT * FROM cards WHERE id = ?", [card_id])
+    return dict(zip(res.columns, res.rows[0])) if res.rows else None
+
+
+async def delete_card(card_id: int) -> None:
+    c = get_client()
+    await c.execute("DELETE FROM cards WHERE id = ?", [card_id])
+
+
+# ════════════════════════════════════════════════════════════
+#  TO'LOV: KRIPTO (token -> tarmoqlar, USDT)
+# ════════════════════════════════════════════════════════════
+async def add_crypto_token(name: str) -> None:
+    c = get_client()
+    await c.execute("INSERT INTO crypto_tokens (name, is_active) VALUES (?, 1)", [name.strip().upper()])
+
+
+async def list_tokens() -> list[dict]:
+    c = get_client()
+    res = await c.execute("SELECT * FROM crypto_tokens WHERE is_active = 1 ORDER BY id ASC")
+    return [dict(zip(res.columns, r)) for r in res.rows]
+
+
+async def get_token(token_id: int) -> dict | None:
+    c = get_client()
+    res = await c.execute("SELECT * FROM crypto_tokens WHERE id = ?", [token_id])
+    return dict(zip(res.columns, res.rows[0])) if res.rows else None
+
+
+async def delete_token(token_id: int) -> None:
+    c = get_client()
+    await c.execute("DELETE FROM crypto_networks WHERE token_id = ?", [token_id])
+    await c.execute("DELETE FROM crypto_tokens WHERE id = ?", [token_id])
+
+
+async def add_network(token_id: int, network_name: str, address: str) -> None:
+    c = get_client()
+    await c.execute(
+        "INSERT INTO crypto_networks (token_id, network_name, address, is_active) VALUES (?, ?, ?, 1)",
+        [token_id, network_name.strip(), address.strip()],
+    )
+
+
+async def list_networks(token_id: int) -> list[dict]:
+    c = get_client()
+    res = await c.execute(
+        "SELECT * FROM crypto_networks WHERE token_id = ? AND is_active = 1 ORDER BY id ASC", [token_id]
+    )
+    return [dict(zip(res.columns, r)) for r in res.rows]
+
+
+async def get_network(network_id: int) -> dict | None:
+    c = get_client()
+    res = await c.execute("SELECT * FROM crypto_networks WHERE id = ?", [network_id])
+    return dict(zip(res.columns, res.rows[0])) if res.rows else None
+
+
+async def delete_network(network_id: int) -> None:
+    c = get_client()
+    await c.execute("DELETE FROM crypto_networks WHERE id = ?", [network_id])
+
+
+# ════════════════════════════════════════════════════════════
+#  TO'LOV SO'ROVLARI (chek bilan)
+# ════════════════════════════════════════════════════════════
+# Ikki admin bir vaqtda "Tasdiqlash" bossa, premium IKKI MARTA berilib
+# ketmasligi uchun: tekshirish + belgilash shu qulf ichida bajariladi.
+_payment_lock = asyncio.Lock()
+
+
+async def create_payment(user_id: int, method: str, method_detail: str, amount: str, currency: str,
+                         receipt_file_id: str, receipt_type: str, plan_days: int) -> int:
+    c = get_client()
+    res = await c.execute(
+        "INSERT INTO premium_payments (user_id, method, method_detail, amount, currency, "
+        "receipt_file_id, receipt_type, plan_days, status, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
+        [user_id, method, method_detail, amount, currency, receipt_file_id, receipt_type,
+         int(plan_days), _now()],
+        return_last_rowid=True,
+    )
+    return res.rows[0][0]
+
+
+async def get_payment(payment_id: int) -> dict | None:
+    c = get_client()
+    res = await c.execute("SELECT * FROM premium_payments WHERE id = ?", [payment_id])
+    return dict(zip(res.columns, res.rows[0])) if res.rows else None
+
+
+async def list_pending_payments(limit: int = 1) -> list[dict]:
+    c = get_client()
+    res = await c.execute(
+        "SELECT * FROM premium_payments WHERE status = 'pending' ORDER BY id ASC LIMIT ?", [limit]
+    )
+    return [dict(zip(res.columns, r)) for r in res.rows]
+
+
+async def count_pending_payments() -> int:
+    c = get_client()
+    res = await c.execute("SELECT COUNT(*) FROM premium_payments WHERE status = 'pending'")
+    return res.rows[0][0]
+
+
+async def resolve_payment(payment_id: int, approve: bool, admin_id: int) -> dict | None:
+    """To'lovni tasdiqlaydi/rad etadi. Qaytaradi: to'lov qatori (dict) --
+    agar u hali 'pending' bo'lgan va endi belgilangan bo'lsa; aks holda
+    (allaqachon ko'rib chiqilgan yoki yo'q) None."""
+    async with _payment_lock:
+        pay = await get_payment(payment_id)
+        if not pay or pay["status"] != "pending":
+            return None
+        c = get_client()
+        status = "approved" if approve else "rejected"
+        await c.execute(
+            "UPDATE premium_payments SET status = ?, processed_at = ?, processed_by = ? WHERE id = ?",
+            [status, _now(), admin_id, payment_id],
+        )
+        pay["status"] = status
+        return pay
+

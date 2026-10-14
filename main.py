@@ -10,6 +10,8 @@ from i18n import load_locales
 import database
 import handlers
 import admin_panel
+import admin_premium
+import premium
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -51,7 +53,12 @@ async def _startup():
 
     handlers.init(app)
     admin_panel.register(app)
+    admin_premium.register(app)
+    premium.register(app)
     database.start_background_sync()
+
+    # Premium muddati tugaganlarni tozalaydi va foydalanuvchiga xabar beradi
+    asyncio.create_task(premium.expiry_loop(app))
 
     logger.info("Bot ishga tushdi: @%s", me.username)
 

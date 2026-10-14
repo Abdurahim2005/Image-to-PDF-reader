@@ -40,3 +40,15 @@ TEMP_DIR = os.environ.get("TEMP_DIR", "/tmp/pdfbot_tmp")
 os.makedirs(TEMP_DIR, exist_ok=True)
 
 DEFAULT_LANGUAGE = "uz"
+
+# ── PREMIUM -- boshlang'ich (standart) qiymatlar ────────────────────
+# Bular faqat baza BIRINCHI marta yaratilganda ishlatiladi; keyin hammasi
+# admin paneldan (🌟 Premium / 💳 To'lov sozlamalari) o'zgartiriladi.
+DEFAULT_PREMIUM_DAYS = 30      # 0 = cheksiz muddat
+DEFAULT_PRICE_UZS = 25000      # so'm (bank karta orqali to'lov)
+DEFAULT_PRICE_USDT = 2         # USDT (kripto orqali to'lov)
+
+# Chek yuborish bosqichi (foydalanuvchi "To'ladim" bosgach) shuncha soniya
+# kutadi -- undan keyin foydalanuvchi yuborgan rasm/PDF chek deb EMAS,
+# oddiy fayl deb qabul qilinadi (rasm->PDF jarayoni buzilmasligi uchun).
+RECEIPT_WAIT_TIMEOUT = 900     # 15 daqiqa

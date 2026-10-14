@@ -25,7 +25,7 @@ def main_menu_kb(lang: str, is_admin: bool = False) -> ReplyKeyboardMarkup:
 
 def premium_ad_kb(lang: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton(t(lang, "premium_btn_test"), callback_data="premium:info")]
+        [InlineKeyboardButton(t(lang, "premium_btn_get"), callback_data="premium:info")]
     ])
 
 
@@ -95,6 +95,8 @@ def admin_panel_kb(lang: str) -> InlineKeyboardMarkup:
          InlineKeyboardButton(t(lang, "admin_btn_top_readers"), callback_data="adm:top_readers")],
         [InlineKeyboardButton(t(lang, "admin_btn_weekly"), callback_data="adm:weekly")],
         [InlineKeyboardButton(t(lang, "admin_btn_limits"), callback_data="adm:limits")],
+        [InlineKeyboardButton(t(lang, "admin_btn_premium"), callback_data="ap:menu"),
+         InlineKeyboardButton(t(lang, "admin_btn_payment_settings"), callback_data="ap:pay")],
         [InlineKeyboardButton(t(lang, "admin_btn_channels"), callback_data="adm:channels")],
         [InlineKeyboardButton(t(lang, "admin_btn_broadcast"), callback_data="adm:broadcast")],
         [InlineKeyboardButton(t(lang, "admin_btn_db_check"), callback_data="adm:db_check")],
@@ -128,21 +130,31 @@ def admin_users_list_kb(lang: str, users: list[dict], offset: int, total: int, l
     return InlineKeyboardMarkup(rows)
 
 
-def admin_user_card_kb(lang: str, telegram_id: int, is_banned: bool, back_offset: int | None = None) -> InlineKeyboardMarkup:
+def admin_user_card_kb(lang: str, telegram_id: int, is_banned: bool, back_offset: int | None = None,
+                       is_premium: bool = False, back_cb: str | None = None) -> InlineKeyboardMarkup:
     """`back_offset` berilsa -- 'Orqaga' tugmasi ro'yxatning O'SHA
     sahifasiga qaytaradi (qidiruv natijasidan kelingan bo'lsa esa,
-    `back_offset=None`, oddiy admin panelga qaytadi)."""
+    `back_offset=None`, oddiy admin panelga qaytadi). `back_cb` berilsa --
+    'Orqaga' aynan shu callback'ga qaytaradi (masalan Premium obunachilar
+    ro'yxatiga)."""
     ban_btn = (
         InlineKeyboardButton(t(lang, "admin_btn_unban"), callback_data=f"adm:unban:{telegram_id}")
         if is_banned else
         InlineKeyboardButton(t(lang, "admin_btn_ban"), callback_data=f"adm:ban:{telegram_id}")
     )
-    back_cb = f"adm:users:{back_offset}" if back_offset is not None else "adm:panel"
+    if back_cb is None:
+        back_cb = f"adm:users:{back_offset}" if back_offset is not None else "adm:panel"
+    premium_btn = (
+        InlineKeyboardButton(t(lang, "ap_btn_user_revoke"), callback_data=f"ap:ur:{telegram_id}")
+        if is_premium else
+        InlineKeyboardButton(t(lang, "ap_btn_user_grant"), callback_data=f"ap:ug:{telegram_id}")
+    )
     return InlineKeyboardMarkup([
         [ban_btn, InlineKeyboardButton(t(lang, "admin_btn_message_user"), callback_data=f"adm:msg:{telegram_id}")],
         [InlineKeyboardButton(t(lang, "admin_btn_limit_create"), callback_data=f"adm:ulimit:create:{telegram_id}"),
          InlineKeyboardButton(t(lang, "admin_btn_limit_read"), callback_data=f"adm:ulimit:read:{telegram_id}")],
         [InlineKeyboardButton(t(lang, "admin_btn_limit_max_images"), callback_data=f"adm:ulimit:max_images:{telegram_id}")],
+        [premium_btn],
         [InlineKeyboardButton(t(lang, "admin_btn_back"), callback_data=back_cb)],
     ])
 

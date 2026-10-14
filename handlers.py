@@ -18,6 +18,7 @@ import database
 from i18n import t
 import keyboards
 import pdf_utils
+import premium
 
 app: Client | None = None
 
@@ -336,6 +337,10 @@ async def _send_limit_reached_then_ad(client: Client, chat_id: int, lang: str, k
         await client.send_message(chat_id, t(lang, key, used=used, limit=limit))
     except Exception:
         pass
+    # Premium foydalanuvchiga premium reklamasi ko'rsatilmaydi (private
+    # chatda chat_id == foydalanuvchi ID).
+    if await database.is_premium(chat_id):
+        return
     await asyncio.sleep(1.2)
     try:
         await client.send_message(chat_id, t(lang, "premium_ad"), reply_markup=keyboards.premium_ad_kb(lang))
@@ -712,7 +717,7 @@ async def _send_limit_status_and_maybe_ad(client: Client, chat_id: int, uid: int
         return  # cheklovsiz -- hech narsa ko'rsatmaymiz
 
     left = max(0, limit - used)
-    if left == 0 and zero_left_show_ad:
+    if left == 0 and zero_left_show_ad and not await database.is_premium(uid):
         try:
             await client.send_message(chat_id, t(lang, "premium_ad"), reply_markup=keyboards.premium_ad_kb(lang))
         except Exception:
@@ -985,9 +990,9 @@ def _register_user_handlers(client: Client) -> None:
 
     @client.on_callback_query(filters.regex(r"^premium:info$"))
     async def premium_info_cb(c, call: CallbackQuery):
-        # Premium hali ishlab chiqilmagan -- test (qisqa) popup xabari.
-        lang = await _lang(call.from_user.id)
-        await call.answer(t(lang, "premium_info_popup"), show_alert=True)
+        uid = call.from_user.id
+        await call.answer()
+        await premium.show_premium(c, call.message.chat.id, uid, await _lang(uid))
 
     @client.on_callback_query(filters.regex(r"^force_sub:check$"))
     async def force_sub_check_cb(c, call: CallbackQuery):
@@ -1036,8 +1041,11 @@ def _register_user_handlers(client: Client) -> None:
         limit_create_s = str(limit_create) if limit_create > 0 else t(lang, "profile_unlimited")
         limit_read_s = str(limit_read) if limit_read > 0 else t(lang, "profile_unlimited")
         max_images_s = str(max_images) if max_images > 0 else t(lang, "profile_unlimited")
-        # Premium hali ishlab chiqilmagan -- hozircha hamma "Oddiy" daraja.
-        tier = t(lang, "profile_tier_standard")
+        prem = await database.get_premium(uid)
+        if prem:
+            tier = f"{t(lang, 'profile_tier_premium')} ({premium.fmt_until(lang, prem['expires_at'])})"
+        else:
+            tier = t(lang, "profile_tier_standard")
         await m.reply(t(
             lang, "profile_text",
             id=uid, name=m.from_user.first_name or "", tier=tier,
@@ -1074,8 +1082,8 @@ def _register_user_handlers(client: Client) -> None:
         lambda _, __, m: m.text in (t("uz", "menu_btn_premium"), t("en", "menu_btn_premium"))
     ))
     async def menu_premium(c, m):
-        lang = await _lang(m.from_user.id)
-        await m.reply(t(lang, "premium_ad"), reply_markup=keyboards.premium_ad_kb(lang))
+        uid = m.from_user.id
+        await premium.show_premium(c, m.chat.id, uid, await _lang(uid))
 
     @client.on_message(filters.private & filters.text & filters.create(
         lambda _, __, m: m.text in (t("uz", "menu_btn_contact_admin"), t("en", "menu_btn_contact_admin"))

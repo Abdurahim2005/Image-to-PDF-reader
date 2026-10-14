@@ -14,6 +14,7 @@ import database
 from i18n import t
 import keyboards
 import handlers  # is_admin, admin_flow, admin_reply_target, _lang
+import premium
 
 
 async def _lang(uid: int) -> str:
@@ -103,7 +104,9 @@ async def handle_admin_text(client: Client, message: Message) -> bool:
         await _send_admin_message_to_user(client, target_uid, message, lang)
         return True
 
-    return False
+    # 🌟 Premium / 💳 To'lov sozlamalari bo'limidagi matn-kiritishlar
+    from admin_premium import handle_text as handle_premium_text
+    return await handle_premium_text(client, message, flow, lang)
 
 
 async def handle_admin_media(client: Client, message: Message) -> bool:
@@ -237,12 +240,18 @@ async def _do_user_search(client: Client, chat_id: int, lang: str, query: str):
 
 
 async def _show_user_card(client: Client, chat_id: int, lang: str, target_uid: int,
-                           edit_msg_id: int | None = None, back_offset: int | None = None):
+                           edit_msg_id: int | None = None, back_offset: int | None = None,
+                           back_cb: str | None = None):
     user = await database.get_user(target_uid)
     if not user:
         await client.send_message(chat_id, t(lang, "admin_search_not_found"))
         return
     status = "🚫 BAN" if user.get("is_banned") else "✅"
+    prem = await database.get_premium(target_uid)
+    premium_text = (
+        t(lang, "ap_premium_yes", until=premium.fmt_until(lang, prem["expires_at"])) if prem
+        else t(lang, "ap_premium_none")
+    )
     text = t(
         lang, "admin_user_card",
         id=target_uid, username=user.get("username") or "—", name=user.get("first_name") or "—",
@@ -251,9 +260,12 @@ async def _show_user_card(client: Client, chat_id: int, lang: str, target_uid: i
         pdfs_created=user.get("pdfs_created") or 0, pdfs_created_today=user.get("pdfs_created_today") or 0,
         pdfs_read=user.get("pdfs_read") or 0, pdfs_read_today=user.get("pdfs_read_today") or 0,
         create_limit=user.get("daily_create_limit") or 0, read_limit=user.get("daily_read_limit") or 0,
-        max_images=user.get("max_images_per_pdf") or 0,
+        max_images=user.get("max_images_per_pdf") or 0, premium=premium_text,
     )
-    kb = keyboards.admin_user_card_kb(lang, target_uid, bool(user.get("is_banned")), back_offset)
+    kb = keyboards.admin_user_card_kb(
+        lang, target_uid, bool(user.get("is_banned")), back_offset,
+        is_premium=bool(prem), back_cb=back_cb,
+    )
     if edit_msg_id:
         try:
             await client.edit_message_text(chat_id, edit_msg_id, text, reply_markup=kb)
@@ -463,6 +475,7 @@ def register(client: Client) -> None:
         chat_id, msg_id = call.message.chat.id, call.message.id
 
         if data == "adm:panel":
+            handlers.admin_flow.pop(uid, None)  # kutilayotgan matn-kiritish bekor
             await show_panel(c, chat_id, lang, edit_message_id=msg_id)
 
         elif data == "adm:stats":
