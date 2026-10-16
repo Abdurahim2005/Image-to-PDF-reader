@@ -211,5 +211,6 @@
   "ap_payment_approved_admin": "✅ To'lov №{id} tasdiqlandi. Premium yoqildi.",
   "ap_payment_rejected_admin": "❌ To'lov №{id} rad etildi.",
   "ap_payment_already": "Bu so'rov allaqachon ko'rib chiqilgan.",
-  "ap_grant_failed": "⚠️ Premium berilmadi (bazada xato). Foydalanuvchi ID: {id} — qo'lda premium bering."
+  "ap_grant_failed": "⚠️ Premium berilmadi (bazada xato). Foydalanuvchi ID: {id} — qo'lda premium bering.",
+  "ap_receipt_attach_failed": "\n\n⚠️ Chek faylini biriktirib bo'lmadi. Uni «📥 Kutilayotgan to'lovlar» bo'limidan qayta ochib ko'ring."
 }

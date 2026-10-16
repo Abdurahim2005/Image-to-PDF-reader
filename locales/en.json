@@ -211,5 +211,6 @@
   "ap_payment_approved_admin": "✅ Payment №{id} approved. Premium activated.",
   "ap_payment_rejected_admin": "❌ Payment №{id} rejected.",
   "ap_payment_already": "This request has already been reviewed.",
-  "ap_grant_failed": "⚠️ Premium was not granted (database error). User ID: {id} — please grant it manually."
+  "ap_grant_failed": "⚠️ Premium was not granted (database error). User ID: {id} — please grant it manually.",
+  "ap_receipt_attach_failed": "\n\n⚠️ The receipt file could not be attached. Try opening it again from «📥 Pending payments»."
 }
