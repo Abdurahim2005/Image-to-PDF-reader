@@ -163,7 +163,11 @@ async def _send_admin_message_to_user(client: Client, target_uid: int, message: 
 # ════════════════════════════════════════════════════════════
 async def show_panel(client: Client, chat_id: int, lang: str, edit_message_id: int | None = None):
     text = t(lang, "admin_panel_title")
-    kb = keyboards.admin_panel_kb(lang)
+    try:
+        pending = await database.count_pending_payments()
+    except Exception:
+        pending = 0
+    kb = keyboards.admin_panel_kb(lang, pending)
     if edit_message_id:
         try:
             await client.edit_message_text(chat_id, edit_message_id, text, reply_markup=kb)

@@ -17,7 +17,7 @@ import asyncio
 import logging
 import time
 
-from pyrogram import Client, ContinuePropagation, filters
+from pyrogram import Client, ContinuePropagation, enums, filters
 from pyrogram.errors import MessageNotModified
 from pyrogram.types import (
     CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message,
@@ -100,32 +100,67 @@ def payment_review_kb(lang: str, payment_id: int) -> InlineKeyboardMarkup:
     ]])
 
 
-async def send_payment_review(client: Client, chat_id: int, lang: str, pay: dict, label: str | None = None):
-    """To'lov so'rovini (chek + tugmalar) adminga yuboradi."""
+async def send_payment_review(client: Client, chat_id: int, lang: str, pay: dict,
+                              label: str | None = None) -> bool:
+    """To'lov so'rovini (chek + tugmalar) adminga yetkazadi. Bildirishnoma
+    YO'QOLMASLIGI uchun 3 bosqichli zaxira bor:
+      1) chek + formatlangan sarlavha;
+      2) formatlashsiz oddiy matn sarlavha bilan (Telegram formatlashni
+         rad etgan bo'lsa);
+      3) chek biriktirilmagan oddiy xabar (fayl yuborib bo'lmasa) --
+         hech bo'lmasa so'rovning o'zi va tugmalar yetib borsin.
+    Qaytaradi: True -- yetkazildi."""
     if label is None:
         row = await database.get_user(pay["user_id"]) or {}
         label = user_label(row.get("username"), row.get("first_name"), pay["user_id"])
     caption = payment_caption(lang, pay, label)
     kb = payment_review_kb(lang, pay["id"])
-    if pay["receipt_type"] == "photo":
-        await client.send_photo(chat_id, pay["receipt_file_id"], caption=caption, reply_markup=kb)
-    else:
-        await client.send_document(chat_id, pay["receipt_file_id"], caption=caption, reply_markup=kb)
+    send_media = client.send_photo if pay["receipt_type"] == "photo" else client.send_document
+
+    for parse_mode in (None, enums.ParseMode.DISABLED):
+        try:
+            kwargs = {"caption": caption, "reply_markup": kb}
+            if parse_mode is not None:
+                kwargs["parse_mode"] = parse_mode
+            await send_media(chat_id, pay["receipt_file_id"], **kwargs)
+            return True
+        except Exception as e:
+            logger.warning("To'lov №%s chekini adminga (%s) yuborib bo'lmadi [%s]: %r",
+                           pay["id"], chat_id, "formatli" if parse_mode is None else "oddiy matn", e)
+
+    try:
+        await client.send_message(
+            chat_id, caption + t(lang, "ap_receipt_attach_failed"),
+            reply_markup=kb, parse_mode=enums.ParseMode.DISABLED,
+        )
+        return True
+    except Exception as e:
+        logger.error("To'lov №%s haqida adminga (%s) umuman xabar yuborib bo'lmadi: %r. "
+                     "ADMIN_IDS to'g'riligini va admin botni /start qilganini tekshiring.",
+                     pay["id"], chat_id, e)
+        return False
 
 
-async def notify_admins(client: Client, payment_id: int, from_user=None) -> None:
-    pay = await database.get_payment(payment_id)
-    if not pay:
-        return
+async def notify_admins(client: Client, pay: dict, from_user=None) -> None:
+    """Yangi to'lov so'rovi haqida BARCHA adminlarga bildirishnoma
+    yuboradi. `pay` -- to'lov ma'lumotlari (bazadan qayta o'qilmaydi)."""
     label = user_label(
         getattr(from_user, "username", None), getattr(from_user, "first_name", None), pay["user_id"]
     )
+    if not config.ADMIN_IDS:
+        logger.error("To'lov №%s: ADMIN_IDS bo'sh -- bildirishnoma yuboradigan admin yo'q!", pay["id"])
+        return
+    delivered = 0
     for admin_id in config.ADMIN_IDS:
         try:
             admin_lang = await database.get_user_language(admin_id)
-            await send_payment_review(client, admin_id, admin_lang, pay, label)
-        except Exception as e:
-            logger.warning("To'lov so'rovini adminga (%s) yuborib bo'lmadi: %s", admin_id, e)
+            if await send_payment_review(client, admin_id, admin_lang, pay, label):
+                delivered += 1
+        except Exception:
+            logger.exception("To'lov №%s: admin %s ga yuborishda kutilmagan xato", pay["id"], admin_id)
+    if not delivered:
+        logger.error("To'lov №%s: HECH BIR adminga yetkazilmadi. Admin paneldagi "
+                     "«📥 Kutilayotgan to'lovlar» bo'limidan ko'rish mumkin.", pay["id"])
 
 
 # ════════════════════════════════════════════════════════════
@@ -415,7 +450,15 @@ async def _receive_receipt(client: Client, message: Message):
     await _safe_delete(client, chat_id, flow.get("ask_msg_id"))
     await _safe_delete(client, chat_id, flow.get("details_msg_id"))
     await client.send_message(chat_id, t(lang, "pay_submitted", payment_id=payment_id))
-    await notify_admins(client, payment_id, message.from_user)
+    try:
+        await notify_admins(client, {
+            "id": payment_id, "user_id": uid, "method": flow["method"], "method_detail": flow["method_detail"],
+            "amount": flow["amount"], "currency": flow["currency"], "receipt_file_id": file_id,
+            "receipt_type": receipt_type, "plan_days": flow["plan_days"],
+            "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }, message.from_user)
+    except Exception:
+        logger.exception("To'lov №%s: adminlarga xabar berishda xato", payment_id)
 
     # Chek qabul qilindi -- fayl "yangi rasm/PDF" sifatida PDF jarayoniga
     # tushib ketmasligi uchun xabar shu yerda TO'XTATILADI.

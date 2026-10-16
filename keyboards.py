@@ -86,7 +86,10 @@ def force_sub_kb(channels: list[dict], lang: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
-def admin_panel_kb(lang: str) -> InlineKeyboardMarkup:
+def admin_panel_kb(lang: str, pending_payments: int = 0) -> InlineKeyboardMarkup:
+    # Kutilayotgan to'lov bo'lsa -- tugmada soni ko'rinadi (bildirishnoma
+    # o'tkazib yuborilsa ham admin panelni ochishi bilan ko'radi).
+    pay_label = t(lang, "admin_btn_payment_settings") + (f" ({pending_payments})" if pending_payments else "")
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(t(lang, "admin_btn_stats"), callback_data="adm:stats")],
         [InlineKeyboardButton(t(lang, "admin_btn_search"), callback_data="adm:search"),
@@ -96,7 +99,7 @@ def admin_panel_kb(lang: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(t(lang, "admin_btn_weekly"), callback_data="adm:weekly")],
         [InlineKeyboardButton(t(lang, "admin_btn_limits"), callback_data="adm:limits")],
         [InlineKeyboardButton(t(lang, "admin_btn_premium"), callback_data="ap:menu"),
-         InlineKeyboardButton(t(lang, "admin_btn_payment_settings"), callback_data="ap:pay")],
+         InlineKeyboardButton(pay_label, callback_data="ap:pay")],
         [InlineKeyboardButton(t(lang, "admin_btn_channels"), callback_data="adm:channels")],
         [InlineKeyboardButton(t(lang, "admin_btn_broadcast"), callback_data="adm:broadcast")],
         [InlineKeyboardButton(t(lang, "admin_btn_db_check"), callback_data="adm:db_check")],
